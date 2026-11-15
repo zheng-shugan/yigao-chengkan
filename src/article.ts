@@ -8,14 +8,20 @@ md.inline.ruler.before("image", "vault-image", (state, silent) => {
     const [src, label = ""] = match[1].split("|");
     const token = state.push("image", "img", 0);
     token.attrSet("src", src.trim());
+    if (/^[1-9]\d*$/.test(label.trim()) && Number.isSafeInteger(Number(label))) {
+      token.attrSet("data-width", label.trim());
+    }
     token.content = label;
   }
   state.pos += match[0].length;
   return true;
 });
 // Keep attachments inert until the user opens the preview.
-md.renderer.rules.image = (tokens, i) =>
-  '<img data-source="' + md.utils.escapeHtml(String(tokens[i].attrGet("src") ?? "")) + '" />';
+md.renderer.rules.image = (tokens, i) => {
+  const source = md.utils.escapeHtml(String(tokens[i].attrGet("src") ?? ""));
+  const width = tokens[i].attrGet("data-width");
+  return '<img data-source="' + source + '"' + (width ? ' data-width="' + width + '"' : '') + ' />';
+};
 
 export function article(doc: Document, markdown: string, title: string): HTMLElement[] {
   const template = doc.createElement("template");

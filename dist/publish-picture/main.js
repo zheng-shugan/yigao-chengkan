@@ -5349,12 +5349,19 @@ md.inline.ruler.before("image", "vault-image", (state, silent) => {
     const [src, label = ""] = match[1].split("|");
     const token = state.push("image", "img", 0);
     token.attrSet("src", src.trim());
+    if (/^[1-9]\d*$/.test(label.trim()) && Number.isSafeInteger(Number(label))) {
+      token.attrSet("data-width", label.trim());
+    }
     token.content = label;
   }
   state.pos += match[0].length;
   return true;
 });
-md.renderer.rules.image = (tokens, i) => '<img data-source="' + md.utils.escapeHtml(String(tokens[i].attrGet("src") ?? "")) + '" />';
+md.renderer.rules.image = (tokens, i) => {
+  const source = md.utils.escapeHtml(String(tokens[i].attrGet("src") ?? ""));
+  const width = tokens[i].attrGet("data-width");
+  return '<img data-source="' + source + '"' + (width ? ' data-width="' + width + '"' : "") + " />";
+};
 function article(doc, markdown, title) {
   const template = doc.createElement("template");
   template.innerHTML = md.render(markdown);
@@ -5436,6 +5443,24 @@ hr{height:2px;border:0;background:#d0d0d0}
 table{border-collapse:collapse;width:100%;font-size:30px}td,th{border:1px solid #bbb;padding:6px}
 `;
 var heading2 = (el) => /^H[1-6]$/.test(el.tagName);
+var minImageScale = 0.75;
+function shortParagraph(block2, lines) {
+  if (block2?.tagName !== "P") return false;
+  const lineHeight = parseFloat(block2.ownerDocument.defaultView.getComputedStyle(block2).lineHeight);
+  return block2.getBoundingClientRect().height <= lines * lineHeight + 0.1;
+}
+function fitFigure(figure, floor) {
+  if (figure.getBoundingClientRect().bottom <= floor + 0.01) return true;
+  const img = figure.querySelector("img");
+  const bounds = img.getBoundingClientRect();
+  const scale = (floor - bounds.top) / bounds.height;
+  if (img.dataset.width || scale < minImageScale) return false;
+  const preferred = img.style.width;
+  img.style.width = bounds.width * scale + "px";
+  if (figure.getBoundingClientRect().bottom <= floor + 0.02) return true;
+  img.style.width = preferred;
+  return false;
+}
 function split(block2, floor) {
   const doc = block2.ownerDocument;
   const walker = doc.createTreeWalker(block2, NodeFilter.SHOW_TEXT);
@@ -5480,6 +5505,36 @@ function paginate(doc, blocks) {
   const floor = () => page.getBoundingClientRect().bottom - 78;
   for (let index = 0; index < blocks.length; index++) {
     let block2 = blocks[index];
+    if (block2.tagName === "FIGURE") {
+      page.append(block2);
+      if (!fitFigure(block2, floor())) {
+        const prev = block2.previousElementSibling;
+        const previousHeading = prev?.previousElementSibling;
+        const title = previousHeading && heading2(previousHeading) ? previousHeading : null;
+        const carry = prev && prev === blocks[index - 1] && shortParagraph(prev, 3) && (title ?? prev).previousElementSibling;
+        const oldPage = page;
+        page = nextPage();
+        if (carry) {
+          if (title) page.append(title);
+          page.append(prev);
+        }
+        page.append(block2);
+        if (carry && !fitFigure(block2, floor())) {
+          if (title) oldPage.append(title);
+          oldPage.append(prev);
+        }
+      }
+      const next = blocks[index + 1];
+      if (!block2.previousElementSibling && next?.tagName === "P") {
+        page.append(next);
+        if (shortParagraph(next, 5)) {
+          const reserve = next.getBoundingClientRect().bottom - block2.getBoundingClientRect().bottom;
+          fitFigure(block2, floor() - reserve);
+        }
+        next.remove();
+      }
+      continue;
+    }
     while (true) {
       page.append(block2);
       const hasEarlier = !!block2.previousElementSibling;
@@ -5487,7 +5542,7 @@ function paginate(doc, blocks) {
         const next = blocks[index + 1];
         page.append(next);
         const bounds = next.getBoundingClientRect();
-        const fitsOpening = bounds.top + (next.tagName === "FIGURE" ? bounds.height : Math.min(bounds.height, parseFloat(doc.defaultView.getComputedStyle(next).lineHeight))) <= floor();
+        const fitsOpening = next.tagName === "FIGURE" ? fitFigure(next, floor()) : bounds.top + Math.min(bounds.height, parseFloat(doc.defaultView.getComputedStyle(next).lineHeight)) <= floor();
         next.remove();
         if (!fitsOpening) {
           block2.remove();
@@ -5496,7 +5551,7 @@ function paginate(doc, blocks) {
         }
       }
       if (block2.getBoundingClientRect().bottom <= floor() + 0.01) break;
-      if (block2.matches("figure,table") || heading2(block2) && hasEarlier) {
+      if (block2.matches("table") || heading2(block2) && hasEarlier) {
         if (!hasEarlier) throw new Error("\u6B64\u5185\u5BB9\u8D85\u8FC7\u5355\u9875\u9AD8\u5EA6\uFF0C\u8BF7\u62C6\u5206\u8868\u683C\u6216\u8C03\u6574\u914D\u56FE\u540E\u91CD\u8BD5\u3002");
         block2.remove();
         page = nextPage();
@@ -5652,7 +5707,8 @@ var Preview = class extends import_obsidian.Modal {
             cache.set(source2, data);
             img.src = data;
             await img.decode();
-            img.width = img.naturalWidth;
+            const width = Number(img.dataset.width) || img.naturalWidth;
+            img.style.width = Math.min(width, 920, 1284 * img.naturalWidth / img.naturalHeight) + "px";
             img.height = img.naturalHeight;
           } catch (e) {
             failures.set(source2, message(e));

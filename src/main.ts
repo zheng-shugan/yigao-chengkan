@@ -68,7 +68,8 @@ class Preview extends Modal {
             cache.set(source, data);
             img.src = data;
             await img.decode();
-            img.width = img.naturalWidth;
+            const width = Number(img.dataset.width) || img.naturalWidth;
+            img.style.width = Math.min(width, 920, 1284 * img.naturalWidth / img.naturalHeight) + "px";
             img.height = img.naturalHeight;
           } catch (e) { failures.set(source, message(e)); }
         }

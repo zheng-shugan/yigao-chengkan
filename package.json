@@ -1,9 +1,10 @@
 {
   "name": "publish-picture",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "scripts": {
-    "build": "tsc --noEmit && esbuild src/main.ts --bundle --platform=node --format=cjs --external:obsidian --external:electron --external:@electron/remote --outfile=dist/publish-picture/main.js && cp manifest.json styles.css dist/publish-picture/ && cd dist && zip -q -r publish-picture.zip publish-picture"
+    "build": "tsc --noEmit && esbuild src/main.ts --bundle --platform=node --format=cjs --external:obsidian --external:electron --external:@electron/remote --outfile=dist/publish-picture/main.js && cp manifest.json styles.css dist/publish-picture/ && cd dist && zip -q -r publish-picture.zip publish-picture",
+    "test": "node tests/pagination.cjs"
   },
   "dependencies": {
     "markdown-it": "^15.0.3"
