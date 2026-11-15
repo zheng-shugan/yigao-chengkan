@@ -1,0 +1,19 @@
+{
+  "name": "publish-picture",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc --noEmit && esbuild src/main.ts --bundle --platform=node --format=cjs --external:obsidian --external:electron --external:@electron/remote --outfile=dist/publish-picture/main.js && cp manifest.json styles.css dist/publish-picture/ && cd dist && zip -q -r publish-picture.zip publish-picture"
+  },
+  "dependencies": {
+    "markdown-it": "^15.0.3"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.2.0",
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.28.2",
+    "obsidian": "^1.14.4",
+    "playwright-core": "^1.65.1",
+    "typescript": "^5.9.3"
+  }
+}
