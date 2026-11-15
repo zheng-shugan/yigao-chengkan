@@ -16,7 +16,7 @@ table{border-collapse:collapse;width:100%;font-size:30px}td,th{border:1px solid 
 `;
 const heading = (el: Element) => /^H[1-6]$/.test(el.tagName);
 
-const minImageScale = 0.75;
+const minImageScale = 0.85;
 
 function shortParagraph(block: Element | null | undefined, lines: number) {
   if (block?.tagName !== "P") return false;

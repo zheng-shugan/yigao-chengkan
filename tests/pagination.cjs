@@ -30,7 +30,7 @@ async function main() {
         ctx.fillStyle = "#e8f1ee"; ctx.fillRect(0, 0, width, height);
         ctx.fillStyle = "#203a33"; ctx.font = "20px sans-serif";
         for (let y = 32; y < height; y += 34) {
-          ctx.fillText(table ? "数据记录   04:17   149   3.2" : key, 20, y);
+          ctx.fillText(table ? (y === 32 ? "公里　　分段配速　　平均心率" : String((y - 32) / 34).padStart(2, "0") + "　　　 04:" + String(10 + y % 40) + "　　　 " + (145 + y % 30)) : key, 20, y);
         }
         const figure = document.createElement("figure");
         const img = new Image(); img.src = c.toDataURL(); img.dataset.source = key;
@@ -60,13 +60,12 @@ async function main() {
         const el = document.createElement("div"); el.style.height = height + "px"; return el;
       };
       const para = text => Object.assign(document.createElement("p"), {textContent:text});
-      for (const space of [800, 700, 600, 599]) {
+      for (const space of [800, 700, 680, 679]) {
         const fig = await picture(600, 800, "threshold", true);
         const pages = await verify([filler(1284 - 25 - space), fig]);
-        expect(pages.length === (space >= 600 ? 1 : 2), "75% boundary at " + space);
-        if (space === 600) {
-          shots.push(await (await plugin.renderPNG(pages[0])).arrayBuffer());
-        }
+        expect(pages.length === (space >= 680 ? 1 : 2), "85% boundary at " + space);
+        const expectedWidth = space >= 680 ? space * 600 / 800 : 600;
+        expect(fig.firstChild.getBoundingClientRect().width === expectedWidth, "Wrong width at " + space);
       }
       for (const fixed of [false, true]) {
         const lead = para("下图展示本次记录。"), tail = para("这些数据用于后续比较。");
@@ -76,11 +75,23 @@ async function main() {
         expect((lead.parentNode === fig.parentNode) === !fixed, "Lead carry or fixed width");
         expect((fig.firstChild.getBoundingClientRect().width === 600) === fixed, "Image sizing");
       }
-      {
-        const fig = await picture(600, 1284, "trailing", true), tail = para("本次测试结束。");
+      for (const tailHeight of [239, 240]) {
+        const fig = await picture(600, 1200, "trailing", true);
+        const tail = para("第一行。\n第二行。\n第三行。\n第四行。");
+        tail.style.whiteSpace = "pre-line";
+        tail.style.lineHeight = tailHeight / 4 + "px";
         await verify([filler(1100), fig, tail]);
-        expect(fig.parentNode === tail.parentNode, "Trailing text orphaned");
-        shots.push(await (await plugin.renderPNG(fig.parentNode)).arrayBuffer());
+        // 1284px of content minus 25px gap leaves 1020px or 1019px for the image.
+        expect(fig.firstChild.getBoundingClientRect().width === (tailHeight === 239 ? 510 : 600),
+          "Trailing paragraph at " + tailHeight);
+      }
+      const sample = await picture(800, 540, "配速数据", true);
+      for (const percent of [100, 85, 75]) {
+        const fig = sample.cloneNode(true);
+        await fig.firstChild.decode();
+        fig.firstChild.style.width = 800 * percent / 100 + "px";
+        const [pg] = await verify([para("分段配速记录"), fig]);
+        shots.push(await (await plugin.renderPNG(pg)).arrayBuffer());
       }
       for (let i = 0; i < 16; i++) {
         const source = ["# 随机样本 " + i];
@@ -106,7 +117,7 @@ async function main() {
       const png = Buffer.from(bytes);
       assert.equal(png.readUInt32BE(16),1080);
       assert.equal(png.readUInt32BE(20),1440);
-      await fs.writeFile(path.join(dir, i + ".png"), png);
+      await fs.writeFile(path.join(dir, [100, 85, 75][i] + ".png"), png);
     }
     console.log("全部分页用例通过。抽查 PNG：" + dir);
   } finally { await browser.close(); }

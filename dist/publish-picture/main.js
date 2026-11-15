@@ -5443,7 +5443,7 @@ hr{height:2px;border:0;background:#d0d0d0}
 table{border-collapse:collapse;width:100%;font-size:30px}td,th{border:1px solid #bbb;padding:6px}
 `;
 var heading2 = (el) => /^H[1-6]$/.test(el.tagName);
-var minImageScale = 0.75;
+var minImageScale = 0.85;
 function shortParagraph(block2, lines) {
   if (block2?.tagName !== "P") return false;
   const lineHeight = parseFloat(block2.ownerDocument.defaultView.getComputedStyle(block2).lineHeight);

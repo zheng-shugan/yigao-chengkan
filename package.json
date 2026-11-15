@@ -1,6 +1,6 @@
 {
   "name": "publish-picture",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "scripts": {
     "build": "tsc --noEmit && esbuild src/main.ts --bundle --platform=node --format=cjs --external:obsidian --external:electron --external:@electron/remote --outfile=dist/publish-picture/main.js && cp manifest.json styles.css dist/publish-picture/ && cd dist && zip -q -r publish-picture.zip publish-picture",
