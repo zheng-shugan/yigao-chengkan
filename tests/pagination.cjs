@@ -23,10 +23,11 @@ async function main() {
       let seed = 104709;
       const random = n => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed % n; };
       const shots = [];
-      async function picture(width, height, key, table = false) {
+      async function picture(width, height, key, table = false, density = 1) {
         const c = document.createElement("canvas");
-        c.width = width; c.height = height;
+        c.width = width * density; c.height = height * density;
         const ctx = c.getContext("2d");
+        ctx.scale(density, density);
         ctx.fillStyle = "#e8f1ee"; ctx.fillRect(0, 0, width, height);
         ctx.fillStyle = "#203a33"; ctx.font = "20px sans-serif";
         for (let y = 32; y < height; y += 34) {
@@ -85,7 +86,7 @@ async function main() {
         expect(fig.firstChild.getBoundingClientRect().width === (tailHeight === 239 ? 510 : 600),
           "Trailing paragraph at " + tailHeight);
       }
-      const sample = await picture(800, 540, "配速数据", true);
+      const sample = await picture(800, 540, "配速数据", true, 2);
       for (const percent of [100, 85, 75]) {
         const fig = sample.cloneNode(true);
         await fig.firstChild.decode();
@@ -115,8 +116,8 @@ async function main() {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "publish-picture-layout-"));
     for (const [i, bytes] of result.entries()) {
       const png = Buffer.from(bytes);
-      assert.equal(png.readUInt32BE(16),1080);
-      assert.equal(png.readUInt32BE(20),1440);
+      assert.equal(png.readUInt32BE(16),2160);
+      assert.equal(png.readUInt32BE(20),2880);
       await fs.writeFile(path.join(dir, [100, 85, 75][i] + ".png"), png);
     }
     console.log("全部分页用例通过。抽查 PNG：" + dir);

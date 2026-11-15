@@ -1,6 +1,6 @@
 import { App, MarkdownView, Modal, Notice, Plugin, requestUrl, TFile, getFrontMatterInfo } from "obsidian";
 import { article } from "./article";
-import { paginate, renderPNG } from "./layout";
+import { exportScale, paginate, renderPNG } from "./layout";
 import { writePages } from "./output";
 
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
@@ -25,7 +25,7 @@ async function loadPicture(app: App, file: TFile, source: string): Promise<strin
     const image = new Image();
     image.src = url;
     await image.decode();
-    const scale = Math.min(1, 920 / image.naturalWidth, 1284 / image.naturalHeight);
+    const scale = Math.min(1, 920 * exportScale / image.naturalWidth, 1284 * exportScale / image.naturalHeight);
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
     canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));

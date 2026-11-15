@@ -5580,6 +5580,7 @@ function paginate(doc, blocks) {
   }
   return pages;
 }
+var exportScale = 2;
 async function renderPNG(page) {
   const doc = page.ownerDocument;
   const wrap = doc.createElement("div");
@@ -5587,13 +5588,15 @@ async function renderPNG(page) {
   style.textContent = pageCSS;
   wrap.append(style, page.cloneNode(true));
   const xml = new XMLSerializer().serializeToString(wrap);
-  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1440"><foreignObject width="1080" height="1440">' + xml + "</foreignObject></svg>";
+  const width = 1080 * exportScale;
+  const height = 1440 * exportScale;
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 1080 1440"><foreignObject width="1080" height="1440">' + xml + "</foreignObject></svg>";
   const image2 = new Image();
   image2.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
   await image2.decode();
   const canvas = doc.createElement("canvas");
-  canvas.width = 1080;
-  canvas.height = 1440;
+  canvas.width = width;
+  canvas.height = height;
   canvas.getContext("2d").drawImage(image2, 0, 0);
   return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("PNG \u751F\u6210\u5931\u8D25")), "image/png"));
 }
@@ -5656,7 +5659,7 @@ async function loadPicture(app, file, source) {
     const image2 = new Image();
     image2.src = url;
     await image2.decode();
-    const scale = Math.min(1, 920 / image2.naturalWidth, 1284 / image2.naturalHeight);
+    const scale = Math.min(1, 920 * exportScale / image2.naturalWidth, 1284 * exportScale / image2.naturalHeight);
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(image2.naturalWidth * scale));
     canvas.height = Math.max(1, Math.round(image2.naturalHeight * scale));

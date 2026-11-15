@@ -159,6 +159,8 @@ export function paginate(doc: Document, blocks: HTMLElement[]): HTMLElement[] {
   return pages;
 }
 
+export const exportScale = 2;
+
 export async function renderPNG(page: HTMLElement): Promise<Blob> {
   const doc = page.ownerDocument;
   const wrap = doc.createElement("div");
@@ -166,12 +168,14 @@ export async function renderPNG(page: HTMLElement): Promise<Blob> {
   style.textContent = pageCSS;
   wrap.append(style, page.cloneNode(true));
   const xml = new XMLSerializer().serializeToString(wrap);
-  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1440"><foreignObject width="1080" height="1440">' + xml + '</foreignObject></svg>';
+  const width = 1080 * exportScale;
+  const height = 1440 * exportScale;
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 1080 1440"><foreignObject width="1080" height="1440">' + xml + '</foreignObject></svg>';
   const image = new Image();
   image.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
   await image.decode();
   const canvas = doc.createElement("canvas");
-  canvas.width = 1080; canvas.height = 1440;
+  canvas.width = width; canvas.height = height;
   canvas.getContext("2d")!.drawImage(image, 0, 0);
   return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("PNG 生成失败")), "image/png"));
 }
