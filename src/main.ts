@@ -1,6 +1,7 @@
 import { App, MarkdownView, Modal, Notice, Plugin, requestUrl, TFile, getFrontMatterInfo } from "obsidian";
 import { article, textArticle } from "./article";
-import { defaultTemplate, exportScale, pageTemplates, paginate, pictureBounds, renderPNG, sizePicture, TemplateId } from "./layout";
+import { defaultTemplate, exportScale, pageHeight, pageTemplates, pageWidth, paginate, pictureBounds, renderPNG, sizePicture, TemplateId } from "./layout";
+import { CoverEditor } from "./cover-editor";
 import { preparePicture, wordArticle, Picture } from "./word";
 import { writePages, saveDocument } from "./output";
 
@@ -24,14 +25,12 @@ async function readPicture(app: App, file: TFile, source: string) {
   return new Blob([bytes], { type });
 }
 
-async function loadPicture(app: App, file: TFile, source: string): Promise<string> {
-  const blob = await readPicture(app, file, source);
+async function pictureDataURL(blob: Blob, width: number, height: number): Promise<string> {
   const url = URL.createObjectURL(blob);
   try {
     const image = new Image();
     image.src = url;
     await image.decode();
-    const { width, height } = pictureBounds(defaultTemplate);
     const scale = Math.min(1, width * exportScale / image.naturalWidth, height * exportScale / image.naturalHeight);
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
@@ -53,6 +52,7 @@ class Preview extends Modal {
   private closed = false;
   private urls: string[] = [];
   private blobs: Blob[] = [];
+  private cover?: CoverEditor;
   constructor(app: App, private file: TFile, private source: string, private dispose: () => void) { super(app); }
 
   async onOpen() {
@@ -62,8 +62,10 @@ class Preview extends Modal {
     const status = bar.createDiv({ cls: "pp-status", text: "正在排版…" });
     status.setAttribute("role", "status");
     const button = bar.createEl("button", { cls: "mod-cta", text: "导出全部" });
+    const coverHost = this.contentEl.createDiv();
     const gallery = this.contentEl.createDiv({ cls: "pp-pages" });
-    const picker = this.contentEl.createDiv({ cls: "pp-templates", attr: { role: "group", "aria-label": "图片模板" } });
+    const bodyGallery = gallery.createDiv();
+    const picker = this.contentEl.createDiv({ cls: "pp-templates", attr: { role: "group", "aria-label": "正文模板" } });
     const cards = new Map<TemplateId, HTMLButtonElement>();
     for (const id of Object.keys(pageTemplates) as TemplateId[]) {
       const template = pageTemplates[id];
@@ -83,21 +85,25 @@ class Preview extends Modal {
     frame.setAttribute("aria-hidden", "true");
     let busy = false;
     let activeTemplate: TemplateId | undefined;
+    const refreshExport = () => {
+      button.disabled = busy || !this.blobs.length || this.cover?.ready === false;
+    };
     const setBusy = (value: boolean) => {
       busy = value;
-      button.disabled = busy || !this.blobs.length;
+      refreshExport();
       for (const card of cards.values()) card.setAttribute("aria-disabled", String(busy));
     };
     const doc = frame.contentDocument!;
     const cache = new Map<string, string>();
     setBusy(true);
     try {
-      const blocks = article(doc, this.source, this.file.basename);
+      const { title, blocks } = article(doc, this.source, this.file.basename);
       const sources = new Set(blocks.flatMap(block => Array.from(block.querySelectorAll("img"), img => img.dataset.source!)));
       const failures = new Map<string, string>();
+      const { width, height } = pictureBounds(defaultTemplate);
       for (const source of sources) {
         try {
-          const data = await loadPicture(this.app, this.file, source);
+          const data = await pictureDataURL(await readPicture(this.app, this.file, source), width, height);
           if (this.closed) return;
           cache.set(source, data);
         } catch (e) { failures.set(source, message(e)); }
@@ -105,10 +111,20 @@ class Preview extends Modal {
       }
       if (failures.size) {
         status.setText("配图读取失败，请修复后重新生成。");
-        const list = gallery.createEl("ul");
+        const list = bodyGallery.createEl("ul");
         for (const [src, why] of failures) list.createEl("li", { text: src + " · " + why });
         return;
       }
+      const cover = this.cover = new CoverEditor(
+        coverHost, gallery, title, cache, file => pictureDataURL(file, pageWidth, pageHeight), () => {
+          const open = bar.querySelector(".pp-open");
+          if (open) {
+            open.remove();
+            status.setText("共 " + this.blobs.length + " 页正文");
+          }
+          refreshExport();
+        },
+      );
       const render = async (id: TemplateId) => {
         setBusy(true);
         status.setText("正在排版…");
@@ -137,7 +153,7 @@ class Preview extends Modal {
             figure.createEl("figcaption", { text: (i + 1) + " / " + blobs.length });
             return figure;
           });
-          gallery.replaceChildren(...figures);
+          bodyGallery.replaceChildren(...figures);
           gallery.scrollTop = 0;
           this.urls.forEach(url => URL.revokeObjectURL(url));
           this.urls = nextUrls;
@@ -145,7 +161,7 @@ class Preview extends Modal {
           activeTemplate = id;
           for (const [key, card] of cards) card.setAttribute("aria-pressed", String(key === id));
           bar.querySelector(".pp-open")?.remove();
-          status.setText("共 " + blobs.length + " 页");
+          status.setText("共 " + blobs.length + " 页正文");
         } catch (e) {
           nextUrls.forEach(url => URL.revokeObjectURL(url));
           if (!this.closed) status.setText("排版失败：" + message(e));
@@ -158,14 +174,17 @@ class Preview extends Modal {
         card.onclick = () => { if (!busy && id !== activeTemplate) void render(id); };
       }
       button.onclick = async () => {
+        if (button.disabled) return;
+        const pages = cover.image ? [cover.image, ...this.blobs] : this.blobs;
         setBusy(true);
+        cover.setLocked(true);
         try {
           const result = await chooseFolder();
           if (result.canceled || !result.filePaths.length || this.closed) return;
           status.setText("正在导出…");
-          const target = await writePages(result.filePaths[0], this.file.basename, this.blobs);
+          const target = await writePages(result.filePaths[0], this.file.basename, pages);
           if (this.closed) return;
-          status.setText("已导出 " + this.blobs.length + " 张图片");
+          status.setText("已导出 " + pages.length + " 张图片");
           bar.querySelector(".pp-open")?.remove();
           const open = bar.createEl("button", { cls: "pp-open", text: "打开文件夹" });
           open.onclick = async () => {
@@ -175,7 +194,10 @@ class Preview extends Modal {
         } catch (e) {
           if (!this.closed) status.setText("导出失败：" + message(e));
         } finally {
-          if (!this.closed) setBusy(false);
+          if (!this.closed) {
+            cover.setLocked(false);
+            setBusy(false);
+          }
         }
       };
       await render(defaultTemplate);
@@ -186,6 +208,7 @@ class Preview extends Modal {
 
   onClose() {
     this.closed = true;
+    this.cover?.dispose();
     this.urls.forEach(url => URL.revokeObjectURL(url));
     this.urls = [];
     this.blobs = [];

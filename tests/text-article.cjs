@@ -16,6 +16,7 @@ async function main() {
   try {
     const page = await browser.newPage();
     await page.exposeFunction("writeBytes", (p, bytes) => fs.writeFile(p, Buffer.from(bytes), {flag:"wx"}));
+    await page.exposeFunction("makeDir", p => fs.mkdir(p).catch(error => error.code));
     await page.exposeFunction("renameFile", (p, to) => fs.rename(p, to));
     await page.exposeFunction("unlinkFile", p => fs.unlink(p));
     await page.evaluate(dir => {
@@ -24,11 +25,15 @@ async function main() {
         const node = document.createElement(tag);
         node.className = options.cls || "";
         node.textContent = options.text || "";
+        if (options.type) node.type = options.type;
+        if (options.value !== undefined) node.value = options.value;
         for (const [name, value] of Object.entries(options.attr || {})) node.setAttribute(name, value);
-        this.append(node);
+        if (options.prepend) this.prepend(node);
+        else this.append(node);
         return node;
       };
       el.createDiv = function(opts) { return this.createEl("div", opts); };
+      el.createSpan = function(opts) { return this.createEl("span", opts); };
       el.setText = function(value) { this.textContent = value; };
       el.addClass = function(cls) { this.classList.add(cls); };
       el.empty = function() { this.replaceChildren(); };
@@ -60,11 +65,21 @@ async function main() {
             return {arrayBuffer: remoteImage, headers: {"content-type":"image/png"}};
           }},
         electron: {clipboard: {writeText: text => window.copied = text},
-          remote: {getCurrentWindow() {}, dialog: {showSaveDialog: () => ({filePath: dir + "/article.docx"})}}},
-        "node:path": {},
+          remote: {getCurrentWindow() {}, dialog: {
+            showOpenDialog: () => ({filePaths: [dir]}),
+            showSaveDialog: () => ({filePath: dir + "/article.docx"}),
+          }}},
+        "node:path": {join: (...parts) => parts.join("/")},
         "node:crypto": {randomUUID: () => "test-temp"},
-        "node:fs/promises": {writeFile: (p,b) => window.writeBytes(p, Array.from(b)), rename: window.renameFile, unlink: window.unlinkFile}
+        "node:fs/promises": {
+          mkdir: async p => {
+            const code = await window.makeDir(p);
+            if (code) throw Object.assign(new Error(code), {code});
+          },
+          writeFile: (p,b) => window.writeBytes(p, Array.from(b)), rename: window.renameFile, unlink: window.unlinkFile,
+        },
       };
+      window.Buffer = {from: data => new Uint8Array(data)};
       window.require = name => modules[name];
     }, dir);
     await page.addScriptTag({content: bundle.outputFiles[0].text});
@@ -137,6 +152,140 @@ async function main() {
     await click("重新读取配图");
     assert.equal((await save()).match(/<w:drawing>/g).length,1);
     console.log("知乎 DOCX 用例通过：纯文字、单图、20 图、本地和网络图、重复引用、损坏和重试。");
+    await verifyCovers(page, dir);
   } finally { await browser.close(); await fs.rm(dir,{recursive:true,force:true}); }
 }
+
+async function verifyCovers(page, dir) {
+  const title = "Obsidian 笔记，怎么排成小红书图文？";
+  const open = async source => page.evaluate(s => {
+    plugin.onunload();
+    window.source = s;
+    commands["export-note"].checkCallback(false);
+  }, source);
+  await page.addStyleTag({path: "styles.css"});
+  await open("# " + title + "\n\n## 准备工作\n\n![[一.png]]\n\n![蓝](https://example.org/blue.png)\n\n" + "校对正文分页。".repeat(240));
+  const exportButton = page.getByRole("button", {name: "导出全部"});
+  const toggle = page.getByRole("checkbox", {name: "添加封面"});
+  const selectTemplate = name => page.getByRole("button", {name, exact:true}).click();
+  const cover = page.locator(".pp-cover-preview img[src]");
+  const body = page.locator(".pp-pages figure:not(.pp-cover-preview) img");
+  const heading = page.getByRole("textbox", {name: "封面标题"});
+  const subtitle = page.getByRole("textbox", {name: "副标题（可选）"});
+  const choice = page.getByRole("combobox", {name: "封面配图"});
+  const localInput = page.locator('.pp-cover-images input[type="file"]');
+  const ready = () => page.waitForFunction(() => document.querySelector(".pp-toolbar .mod-cta")?.disabled === false);
+  const sources = () => body.evaluateAll(images => images.map(image => image.src));
+  const previewBytes = async image => Buffer.from(await image.evaluate(async el => {
+    const blob = await (await fetch(el.src)).blob();
+    return new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(",")[1]);
+      reader.readAsDataURL(blob);
+    });
+  }), "base64");
+  const exportPages = async () => {
+    await exportButton.click();
+    await page.getByRole("button", {name: "打开文件夹"}).waitFor();
+  };
+
+  await ready();
+  assert.equal(await toggle.isChecked(), false);
+  const bodySources = await sources();
+  assert.ok(bodySources.length > 1);
+  const bodyFirst = await previewBytes(body.first());
+  await toggle.check();
+  await ready();
+  assert.equal(await heading.inputValue(), title);
+  assert.equal(await page.locator('.pp-cover-templates [aria-pressed="true"]').innerText(), "大字标题");
+  await subtitle.fill("从 Markdown 到分页图片");
+  await ready();
+  const statement = await previewBytes(cover);
+  assert.equal(statement.readUInt32BE(16), 2160);
+  assert.equal(statement.readUInt32BE(20), 2880);
+  assert.equal(await page.locator(".pp-pages img").first().getAttribute("alt"), "封面");
+  await exportPages();
+  const withCover = path.join(dir, "验收样本");
+  assert.deepEqual(await fs.readFile(path.join(withCover, "001.png")), statement);
+  assert.deepEqual(await fs.readFile(path.join(withCover, "002.png")), bodyFirst);
+
+  await selectTemplate("截图导读");
+  await ready();
+  assert.equal(await choice.inputValue(), "0");
+  const screenshot = await previewBytes(cover);
+  await choice.selectOption("1");
+  await ready();
+  assert.notDeepEqual(await previewBytes(cover), screenshot);
+  await selectTemplate("杂志图封");
+  await ready();
+  assert.equal(await choice.inputValue(), "1");
+  assert.equal(await heading.inputValue(), title);
+  assert.equal(await subtitle.inputValue(), "从 Markdown 到分页图片");
+  assert.notDeepEqual(await previewBytes(cover), screenshot);
+
+  for (const longTitle of ["特别长的封面标题".repeat(20), "unbrokenword".repeat(35)]) {
+    await heading.fill(longTitle);
+    await page.getByText("标题太长，请缩短到三行以内。").waitFor();
+    assert.equal(await exportButton.isDisabled(), true);
+    assert.equal(await cover.count(), 0);
+  }
+  await heading.fill(title);
+  await ready();
+  await localInput.setInputFiles({name: "损坏.png", mimeType: "image/png", buffer: Buffer.from("broken")});
+  await page.getByText("无法读取这张封面配图，请重新选图。").waitFor();
+  assert.equal(await exportButton.isDisabled(), true);
+  const png = Buffer.from(await page.evaluate(() => Array.from(new Uint8Array(localImage))));
+  await localInput.setInputFiles({name: "封面专用.png", mimeType: "image/png", buffer: png});
+  await ready();
+  assert.equal(await choice.locator("option:checked").innerText(), "封面专用.png");
+  assert.deepEqual(await sources(), bodySources);
+
+  // Hold a local decode in flight, then switch template before it finishes.
+  await page.evaluate(() => {
+    const decode = Image.prototype.decode;
+    Image.prototype.decode = async function () {
+      Image.prototype.decode = decode;
+      await new Promise(resolve => { window.releaseCoverDecode = resolve; });
+      try { await decode.call(this); }
+      finally { window.coverDecodeFinished = true; }
+    };
+  });
+  await localInput.setInputFiles({name: "慢图.png", mimeType: "image/png", buffer: png});
+  await page.waitForFunction(() => !!window.releaseCoverDecode);
+  assert.equal(await exportButton.isDisabled(), true);
+  await selectTemplate("大字标题");
+  await ready();
+  const current = await cover.getAttribute("src");
+  await page.evaluate(() => window.releaseCoverDecode());
+  await page.waitForFunction(() => window.coverDecodeFinished);
+  assert.equal(await cover.getAttribute("src"), current);
+  assert.deepEqual(await previewBytes(cover), statement);
+  assert.deepEqual(await sources(), bodySources);
+
+  await toggle.uncheck();
+  await exportPages();
+  const withoutCover = path.join(dir, "验收样本 (2)");
+  assert.deepEqual(await fs.readFile(path.join(withoutCover, "001.png")), bodyFirst);
+  assert.equal((await fs.readdir(withoutCover)).length, bodySources.length);
+
+  await open("只有正文，标题使用文件名。");
+  await ready();
+  assert.equal(await toggle.isChecked(), false);
+  await toggle.check();
+  await ready();
+  assert.equal(await heading.inputValue(), "验收样本");
+  await selectTemplate("截图导读");
+  await page.getByText("请选择一张封面配图。").waitFor();
+  assert.equal(await exportButton.isDisabled(), true);
+  await localInput.setInputFiles({name: "纯文字笔记的封面.png", mimeType:"image/png", buffer:png});
+  await ready();
+  const localCover = await cover.getAttribute("src");
+  const classicPages = await sources();
+  await selectTemplate("暖纸便签");
+  await ready();
+  assert.equal(await cover.getAttribute("src"), localCover);
+  assert.notDeepEqual(await sources(), classicPages);
+  console.log("封面用例通过：三个模板、选图、长标题、并发切换、正文复用及导出顺序。");
+}
+
 main().catch(e => {console.error(e); process.exitCode = 1;});

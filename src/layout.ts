@@ -1,5 +1,5 @@
-const pageWidth = 1080;
-const pageHeight = 1440;
+export const pageWidth = 1080;
+export const pageHeight = 1440;
 
 export const pageTemplates = {
   classic: {
@@ -212,11 +212,11 @@ export function paginate(doc: Document, blocks: HTMLElement[], id = defaultTempl
 
 export const exportScale = 2;
 
-export async function renderPNG(page: HTMLElement): Promise<Blob> {
+export async function renderPNG(page: HTMLElement, css = pageCSS): Promise<Blob> {
   const doc = page.ownerDocument;
   const wrap = doc.createElement("div");
   const style = doc.createElement("style");
-  style.textContent = pageCSS;
+  style.textContent = css;
   wrap.append(style, page.cloneNode(true));
   const xml = new XMLSerializer().serializeToString(wrap);
   const width = pageWidth * exportScale;

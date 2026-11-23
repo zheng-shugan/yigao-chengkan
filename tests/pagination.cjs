@@ -106,7 +106,7 @@ async function main() {
           if (random(3)) source.push("自动生成的测量记录。".repeat(1 + random(80)));
           source.push("![[附件" + j + ".png" + (j === 0 ? "|360" : "") + "]]");
         }
-        const blocks = plugin.article(document, source.join("\n\n"), "样本");
+        const { blocks } = plugin.article(document, source.join("\n\n"), "样本");
         for (const img of blocks.flatMap(b=>[...b.querySelectorAll("img")])) {
           const generated = await picture(360 + random(550), 280 + random(960), img.dataset.source);
           img.src = generated.firstChild.src; await img.decode();
@@ -123,7 +123,7 @@ async function main() {
       const tall = await picture(500, 1600, "全页竖图");
       fixed.firstChild.dataset.width = "480";
       for (const figure of [wide, fixed, tall]) plugin.sizePicture(figure.firstChild, "warm");
-      const blocks = plugin.article(document, "# 清晨步行\n\n" + "沿着河岸走了一段，记下看见的风景。".repeat(100), "样本");
+      const { blocks } = plugin.article(document, "# 清晨步行\n\n" + "沿着河岸走了一段，记下看见的风景。".repeat(100), "样本");
       const warm = await verify(blocks, "warm");
       expect(warm.length >= 2, "Warm text should span multiple pages");
       const warmBlob = await plugin.renderPNG(warm[0]);

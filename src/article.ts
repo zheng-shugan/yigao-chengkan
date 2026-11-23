@@ -45,8 +45,9 @@ function renderArticle(doc: Document, markdown: string, title: string, publicTex
   return root;
 }
 
-export function article(doc: Document, markdown: string, title: string): HTMLElement[] {
-  const root = renderArticle(doc, markdown, title);
+export function article(doc: Document, markdown: string, fallback: string) {
+  const root = renderArticle(doc, markdown, fallback);
+  const title = root.firstElementChild?.textContent?.trim() || fallback;
   const blocks: HTMLElement[] = [];
   function visit(el: Element, depth: number, quoted: boolean) {
     if (el.matches("ul,ol")) {
@@ -97,7 +98,7 @@ export function article(doc: Document, markdown: string, title: string): HTMLEle
     emitText();
   }
   for (const child of root.children) visit(child, 0, false);
-  return blocks;
+  return { title, blocks };
 }
 
 export function textArticle(doc: Document, markdown: string, fallback: string) {
