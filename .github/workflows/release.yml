@@ -105,13 +105,45 @@ jobs:
           EXPECTED_DIGEST: ${{ needs.draft.outputs.assets-digest }}
         run: |
           git show origin/main:manifest.json | cmp manifest.json -
+          api_root="repos/$GITHUB_REPOSITORY/releases"
+          for attempt in 1 2 3 4 5; do
+            if release_id="$(gh api --paginate "$api_root?per_page=100" | jq -ers --arg tag "$RELEASE_TAG" '
+                [ .[][] | select(.draft and .tag_name == $tag) ]
+                | if length == 1 then .[0].id
+                  else error("Expected one draft for \($tag), found \(length)") end
+              ')" && asset_ids="$(gh api --paginate "$api_root/$release_id/assets?per_page=100" | jq -ces '
+                add as $assets
+                | ["main.js", "manifest.json", "styles.css"]
+                | map(. as $name
+                  | [ $assets[] | select(.name == $name and .state == "uploaded" and .size > 0) ]
+                  | if length == 1 then {key: $name, value: .[0].id}
+                    else error("Expected one uploaded, nonempty \($name), found \(length)") end)
+                | from_entries
+              ')"; then
+              break
+            fi
+            if [[ "$attempt" == 5 ]]; then
+              echo "Could not verify the draft release or its attachments for $RELEASE_TAG." >&2
+              exit 1
+            fi
+            sleep "$((attempt * 2))"
+          done
+
           assets_dir="$(mktemp -d)"
-          gh release download "$RELEASE_TAG" --dir "$assets_dir" \
-            --pattern main.js --pattern manifest.json --pattern styles.css
+          trap 'rm -rf "$assets_dir"' EXIT
+          for asset in main.js manifest.json styles.css; do
+            asset_id="$(jq -er --arg name "$asset" '.[$name]' <<< "$asset_ids")"
+            if ! gh api -H 'Accept: application/octet-stream' "$api_root/assets/$asset_id" > "$assets_dir/$asset" ||
+                [[ ! -s "$assets_dir/$asset" ]]; then
+              echo "Could not download $asset from draft release $release_id." >&2
+              exit 1
+            fi
+          done
           digest="$(cd "$assets_dir" && sha256sum main.js manifest.json styles.css | sha256sum | cut -d ' ' -f 1)"
           if [[ "$digest" != "$EXPECTED_DIGEST" ]]; then
             echo "The uploaded release assets differ from the build."
             exit 1
           fi
           git for-each-ref --format='%(contents)' "refs/tags/$RELEASE_TAG" > "$assets_dir/notes.md"
-          gh release edit "$RELEASE_TAG" --draft=false --notes-file "$assets_dir/notes.md"
+          gh api --method PATCH "$api_root/$release_id" -F draft=false -F "body=@$assets_dir/notes.md" \
+            --jq '.html_url'

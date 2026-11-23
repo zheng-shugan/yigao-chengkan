@@ -44,7 +44,7 @@
 
 1. 同步更新 `manifest.json`、`package.json`、`package-lock.json` 的版本，并在 `versions.json` 记录该版本对应的最低 Obsidian 版本。
 2. 将改动推送到公开 GitHub 仓库的默认分支 `main`，确认 CI 通过。
-3. 在该提交创建带发布说明的版本标签，例如 `git tag -a 1.3.0 -m "一稿成刊 1.3.0"`，再运行 `git push origin 1.3.0`。标签应与 manifest 版本一致，格式为 `x.y.z`。Actions 完成验证后会自动公开 GitHub Release。
+3. 在该提交创建带发布说明的版本标签，例如 `git tag -a 1.3.1 -m "一稿成刊 1.3.1"`，再运行 `git push origin 1.3.1`。标签应与 manifest 版本一致，格式为 `x.y.z`。Actions 完成验证后会自动公开 GitHub Release。
 4. 首次发版后，在 [Obsidian Community Directory](https://community.obsidian.md/) 关联 GitHub 账户、提交仓库，并根据审核结果发布条目。上架后的更新由目录从 GitHub Releases 检测。
 
 ## 许可证
