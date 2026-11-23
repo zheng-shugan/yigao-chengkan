@@ -4,11 +4,11 @@
 
 ## 安装
 
-**社区插件目录**。上架后，在桌面版 Obsidian 的「设置 → 第三方插件 → 浏览」搜索「一稿成刊」，安装并启用。
+**社区插件目录**。上架后，在桌面版 Obsidian 的「设置 → 第三方插件 → 浏览」搜索「Draft to Pages」，安装并启用。
 
-**手动安装**。从 GitHub Releases 下载 `main.js`、`manifest.json` 和 `styles.css`，一起放到笔记库的 `.obsidian/plugins/yigao-chengkan/`。从源码生成的 `dist/yigao-chengkan.zip` 解压后也可以放到插件目录。重启 Obsidian 后，在「设置 → 第三方插件」启用「一稿成刊」。
+**手动安装**。从 GitHub Releases 下载 `main.js`、`manifest.json` 和 `styles.css`，一起放到笔记库的 `.obsidian/plugins/yigao-chengkan/`。从源码生成的 `dist/yigao-chengkan.zip` 解压后也可以放到插件目录。重启 Obsidian 后，在「设置 → 第三方插件」启用「Draft to Pages」。
 
-如果已手动安装早期的「长文一键出图」（`publish-picture`），先在同一个笔记库停用旧插件，再安装并启用「一稿成刊」。如果为旧插件设置了快捷键，请给新插件的命令重新绑定。
+如果已手动安装早期的「长文一键出图」（`publish-picture`），先在同一个笔记库停用旧插件，再安装并启用「Draft to Pages」。如果为旧插件设置了快捷键，请给新插件的命令重新绑定。
 
 ## 使用
 
