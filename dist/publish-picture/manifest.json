@@ -1,9 +1,9 @@
 {
   "id": "publish-picture",
   "name": "长文一键出图",
-  "version": "1.1.2",
+  "version": "1.3.0",
   "minAppVersion": "1.5.7",
-  "description": "将当前笔记和配图自动分页，预览并导出可分享的 PNG 图片。",
+  "description": "将当前笔记导出为分页 PNG，或生成可一次导入知乎的含图 Word 文档。",
   "author": "Publish Picture",
   "isDesktopOnly": true
 }

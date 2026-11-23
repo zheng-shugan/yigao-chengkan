@@ -37,18 +37,18 @@ async function main() {
         const img = new Image(); img.src = c.toDataURL(); img.dataset.source = key;
         await img.decode(); figure.append(img); return figure;
       }
-      async function verify(blocks) {
+      async function verify(blocks, template = "classic") {
         document.body.replaceChildren();
         const expected = normalize(blocks.map(b => b.textContent).join(""));
         const keys = blocks.flatMap(b => [...b.querySelectorAll("img")].map(i=>i.dataset.source));
-        const pages = plugin.paginate(document, blocks);
+        const pages = plugin.paginate(document, blocks, template);
         expect(expected === normalize(pages.map(pg=>pg.textContent).join("")), "Text changed");
         const placed = pages.flatMap(pg=>[...pg.querySelectorAll("img")]);
         expect(JSON.stringify(keys) === JSON.stringify(placed.map(i=>i.dataset.source)), "Image order changed");
         for (const pg of pages) {
           const box = pg.getBoundingClientRect();
           for (const el of pg.children) {
-            expect(el.getBoundingClientRect().bottom <= box.bottom - 78 + .03, "Page overflow");
+            expect(el.getBoundingClientRect().bottom <= box.bottom - plugin.pageTemplates[template].bottom + .03, "Page overflow");
           }
         }
         for (const img of placed) {
@@ -111,6 +111,32 @@ async function main() {
         }
         await verify(blocks);
       }
+      const caption = para("图注：清晨步行的分段记录。");
+      const wide = await picture(1000, 1100, "暖纸便签配图");
+      const fixed = await picture(1200, 760, "指定宽度");
+      const tall = await picture(500, 1600, "全页竖图");
+      fixed.firstChild.dataset.width = "480";
+      for (const figure of [wide, fixed, tall]) plugin.sizePicture(figure.firstChild, "warm");
+      const blocks = plugin.article(document, "# 清晨步行\n\n" + "沿着河岸走了一段，记下看见的风景。".repeat(100), "样本");
+      const warm = await verify(blocks, "warm");
+      expect(warm.length >= 2, "Warm text should span multiple pages");
+      const warmBlob = await plugin.renderPNG(warm[0]);
+      await verify([filler(1000), wide, caption], "warm");
+      expect(wide.parentElement === caption.parentElement, "Warm image lost its caption");
+      expect(wide.firstChild.getBoundingClientRect().width <= 888, "Warm image exceeded content width");
+      await verify([tall, fixed], "warm");
+      expect(fixed.firstChild.getBoundingClientRect().width === 480, "Warm image lost fixed width");
+      expect(Math.abs(tall.firstChild.getBoundingClientRect().height - 1234) < .1, "Tall image exceeded warm content height");
+      const bitmap = await createImageBitmap(warmBlob);
+      const pixel = document.createElement("canvas").getContext("2d");
+      pixel.drawImage(bitmap, 0, 0);
+      expect(bitmap.width === 2160 && bitmap.height === 2880, "Warm PNG dimensions changed");
+      expect([...pixel.getImageData(0, 0, 1, 1).data].join() === "251,242,226,255", "Warm paper missing from PNG");
+      expect([...pixel.getImageData(200, 137, 1, 1).data].join() === "154,76,60,255", "Warm rule missing from PNG");
+      bitmap.close();
+      shots.push(await warmBlob.arrayBuffer());
+      const [classic] = await verify([para("切回经典白底")]);
+      expect(getComputedStyle(classic).backgroundColor === "rgb(255, 255, 255)", "Warm styling carried over to classic");
       return shots.map(buffer=>Array.from(new Uint8Array(buffer)));
     });
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "publish-picture-layout-"));
@@ -118,7 +144,7 @@ async function main() {
       const png = Buffer.from(bytes);
       assert.equal(png.readUInt32BE(16),2160);
       assert.equal(png.readUInt32BE(20),2880);
-      await fs.writeFile(path.join(dir, [100, 85, 75][i] + ".png"), png);
+      await fs.writeFile(path.join(dir, ["100", "85", "75", "warm"][i] + ".png"), png);
     }
     console.log("全部分页用例通过。抽查 PNG：" + dir);
   } finally { await browser.close(); }

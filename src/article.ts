@@ -23,15 +23,31 @@ md.renderer.rules.image = (tokens, i) => {
   return '<img data-source="' + source + '"' + (width ? ' data-width="' + width + '"' : '') + ' />';
 };
 
-export function article(doc: Document, markdown: string, title: string): HTMLElement[] {
+md.inline.ruler.before("link", "vault-link", (state, silent) => {
+  if (!state.env?.publicText || !state.src.startsWith("[[", state.pos)) return false;
+  const match = /^\[\[([^\]\n]+)\]\]/.exec(state.src.slice(state.pos));
+  if (!match) return false;
+  const [target, alias] = match[1].split("|");
+  const [path, heading] = target.split("#");
+  if (!silent) state.pending += alias?.trim() || path.split("/").pop()?.replace(/\.md$/i, "") || heading || "";
+  state.pos += match[0].length;
+  return true;
+});
+
+function renderArticle(doc: Document, markdown: string, title: string, publicText = false) {
   const template = doc.createElement("template");
-  template.innerHTML = md.render(markdown);
+  template.innerHTML = md.render(markdown, { publicText });
   const root = template.content;
   if (root.firstElementChild?.tagName !== "H1") {
     const heading = doc.createElement("h1");
     heading.textContent = title;
     root.prepend(heading);
   }
+  return root;
+}
+
+export function article(doc: Document, markdown: string, title: string): HTMLElement[] {
+  const root = renderArticle(doc, markdown, title);
   const blocks: HTMLElement[] = [];
   function visit(el: Element, depth: number, quoted: boolean) {
     if (el.matches("ul,ol")) {
@@ -83,4 +99,17 @@ export function article(doc: Document, markdown: string, title: string): HTMLEle
   }
   for (const child of root.children) visit(child, 0, false);
   return blocks;
+}
+
+export function textArticle(doc: Document, markdown: string, fallback: string) {
+  const root = renderArticle(doc, markdown, fallback, true);
+  const heading = root.firstElementChild!;
+  const title = heading.textContent?.trim() || fallback;
+  heading.remove();
+  for (const link of root.querySelectorAll("a")) {
+    if (!/^(https?:\/\/|mailto:)/i.test(link.getAttribute("href") || "")) link.replaceWith(...link.childNodes);
+  }
+  const body = doc.createElement("div");
+  body.append(root);
+  return { title, body };
 }

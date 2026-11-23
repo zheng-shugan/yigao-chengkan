@@ -1,19 +1,66 @@
+const pageWidth = 1080;
+const pageHeight = 1440;
+
+export const pageTemplates = {
+  classic: {
+    label: "经典白底", paper: "#ffffff", ink: "#242425", accent: "#aeb5bb",
+    top: 78, bottom: 78, side: 80, fontSize: 36, lineHeight: 1.58, gap: 25,
+  },
+  warm: {
+    label: "暖纸便签", paper: "#fbf2e2", ink: "#372d27", accent: "#9a4c3c",
+    top: 114, bottom: 92, side: 96, fontSize: 36, lineHeight: 1.72, gap: 28,
+  },
+};
+export type TemplateId = keyof typeof pageTemplates;
+export const defaultTemplate: TemplateId = "classic";
+
+const fontFamily = '"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif';
+export function pictureBounds(id: TemplateId) {
+  const { top, bottom, side } = pageTemplates[id];
+  return { width: pageWidth - 2 * side, height: pageHeight - top - bottom };
+}
+
+const templateCSS = Object.entries(pageTemplates).map(([key, template]) => {
+  const page = `.page[data-template="${key}"]`;
+  const { top, bottom, side, paper, ink, accent, fontSize, lineHeight, gap } = template;
+  return `
+${page}{padding:${top}px ${side}px ${bottom}px;background:${paper};color:${ink};font:${fontSize}px/${lineHeight} ${fontFamily}}
+${page}>*+*{margin-top:${gap}px}
+${page} .quoted{border-left-color:${accent}}
+${page} figure img{max-height:${pageHeight - top - bottom}px}
+`;
+}).join("");
+
 const pageCSS = `
 *{box-sizing:border-box}
 body{margin:0}
-.page{display:flow-root;width:1080px;height:1440px;padding:78px 80px;background:white;color:#242425;font:36px/1.58 "PingFang SC","Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;overflow-wrap:anywhere;line-break:strict}
+.page{display:flow-root;width:${pageWidth}px;height:${pageHeight}px;overflow-wrap:anywhere;line-break:strict}
 .page>*{position:relative;margin:0}
-.page>*+*{margin-top:25px}
 h1,h2,h3,h4,h5,h6{line-height:1.3;font-weight:700}
 h1{font-size:62px}h2{font-size:49px}h3{font-size:43px}h4{font-size:39px}h5{font-size:37px}h6{font-size:36px}
 a{color:#244e65;text-decoration:underline}
-.quoted{border-left:5px solid #aeb5bb;padding-left:25px;color:#49515a}
+.quoted{border-left:5px solid;padding-left:25px;color:#49515a}
 [data-marker]::before{content:attr(data-marker);position:absolute;right:calc(100% + 8px);top:0}
 pre,code{font-family:ui-monospace,monospace;font-size:.9em;background:#f2f3f4;white-space:pre-wrap}
-figure img{display:block;max-width:100%;max-height:1284px;height:auto;margin:auto}
+figure img{display:block;max-width:100%;height:auto;margin:auto}
 hr{height:2px;border:0;background:#d0d0d0}
 table{border-collapse:collapse;width:100%;font-size:30px}td,th{border:1px solid #bbb;padding:6px}
+${templateCSS}
+.page[data-template="warm"]{position:relative}
+.page[data-template="warm"]::before{content:"";position:absolute;top:68px;inset-inline:${pageTemplates.warm.side}px;border-top:3px solid ${pageTemplates.warm.accent}}
+.page[data-template="warm"] a{color:#854334}
+.page[data-template="warm"] .quoted{color:#695343}
+.page[data-template="warm"] pre,.page[data-template="warm"] code{background:#f1e4d0}
+.page[data-template="warm"] hr{background:#d8c3aa}
+.page[data-template="warm"] td,.page[data-template="warm"] th{border-color:#cdb69d}
 `;
+
+export function sizePicture(img: HTMLImageElement, id: TemplateId) {
+  const { width, height } = pictureBounds(id);
+  const preferred = Number(img.dataset.width) || img.naturalWidth;
+  img.style.width = Math.min(preferred, width, height * img.naturalWidth / img.naturalHeight) + "px";
+  img.height = img.naturalHeight;
+}
 const heading = (el: Element) => /^H[1-6]$/.test(el.tagName);
 
 const minImageScale = 0.85;
@@ -68,20 +115,24 @@ function split(block: HTMLElement, floor: number): HTMLElement | null {
   return tail;
 }
 
-export function paginate(doc: Document, blocks: HTMLElement[]): HTMLElement[] {
-  const style = doc.createElement("style");
-  style.textContent = pageCSS;
-  doc.head.append(style);
+export function paginate(doc: Document, blocks: HTMLElement[], id = defaultTemplate): HTMLElement[] {
+  if (!doc.head.querySelector("style[data-pp-layout]")) {
+    const style = doc.createElement("style");
+    style.dataset.ppLayout = "";
+    style.textContent = pageCSS;
+    doc.head.append(style);
+  }
   const pages: HTMLElement[] = [];
   function nextPage() {
     const page = doc.createElement("article");
     page.className = "page";
+    page.dataset.template = id;
     doc.body.append(page);
     pages.push(page);
     return page;
   }
   let page = nextPage();
-  const floor = () => page.getBoundingClientRect().bottom - 78;
+  const floor = () => page.getBoundingClientRect().bottom - pageTemplates[id].bottom;
   for (let index = 0; index < blocks.length; index++) {
     let block = blocks[index];
     if (block.tagName === "FIGURE") {
@@ -168,10 +219,10 @@ export async function renderPNG(page: HTMLElement): Promise<Blob> {
   style.textContent = pageCSS;
   wrap.append(style, page.cloneNode(true));
   const xml = new XMLSerializer().serializeToString(wrap);
-  const width = 1080 * exportScale;
-  const height = 1440 * exportScale;
-  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + width + '" height="' + height + '" viewBox="0 0 1080 1440"><foreignObject width="1080" height="1440">' + xml + '</foreignObject></svg>';
-  const image = new Image();
+  const width = pageWidth * exportScale;
+  const height = pageHeight * exportScale;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${pageWidth} ${pageHeight}"><foreignObject width="${pageWidth}" height="${pageHeight}">${xml}</foreignObject></svg>`;
+  const image = doc.createElement("img");
   image.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
   await image.decode();
   const canvas = doc.createElement("canvas");

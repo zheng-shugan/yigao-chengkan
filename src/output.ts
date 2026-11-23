@@ -1,4 +1,5 @@
-import { mkdir, writeFile, unlink, rmdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, writeFile, unlink, rmdir, rename } from "node:fs/promises";
 import { join } from "node:path";
 
 export async function writePages(parent: string, title: string, pages: Blob[]): Promise<string> {
@@ -24,4 +25,12 @@ export async function writePages(parent: string, title: string, pages: Blob[]): 
     await rmdir(target).catch(() => {});
     throw error;
   }
+}
+
+export async function saveDocument(path: string, document: Blob) {
+  const temp = path + "." + randomUUID() + ".tmp";
+  try {
+    await writeFile(temp, new Uint8Array(await document.arrayBuffer()), {flag: "wx"});
+    await rename(temp, path);
+  } finally { await unlink(temp).catch(() => {}); }
 }
