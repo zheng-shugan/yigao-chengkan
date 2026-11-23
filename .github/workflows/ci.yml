@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - uses: obsidianmd/obsidian-workflows@v1
+        with:
+          node-version: '22'
+          scanner-lint: 'true'
+          strict: 'true'
+      - name: Check installable assets
+        run: |
+          test -s main.js
+          test -s manifest.json
+          test -s styles.css
+      - name: Install Chinese fonts for pagination tests
+        run: |
+          if [[ -z "$(fc-list :lang=zh family)" ]]; then
+            sudo apt-get update
+            sudo apt-get install --yes --no-install-recommends fonts-noto-cjk
+          fi
+      - name: Run export tests in Chrome
+        run: |
+          export CHROME_BIN="$(command -v google-chrome)"
+          test -x "$CHROME_BIN"
+          "$CHROME_BIN" --version
+          npm test

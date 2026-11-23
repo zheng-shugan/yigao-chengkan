@@ -57,7 +57,7 @@ class Preview extends Modal {
 
   async onOpen() {
     this.modalEl.addClass("pp-modal");
-    this.titleEl.setText("长文一键出图");
+    this.titleEl.setText("导出分页图片");
     const bar = this.contentEl.createDiv({ cls: "pp-toolbar" });
     const status = bar.createDiv({ cls: "pp-status", text: "正在排版…" });
     status.setAttribute("role", "status");
@@ -273,7 +273,7 @@ class TextPreview extends Modal {
   }
 }
 
-export default class PublishPicture extends Plugin {
+export default class YigaoChengkan extends Plugin {
   private previews = new Set<Modal>();
   onload() {
     const show = async (view: MarkdownView, Panel: typeof Preview | typeof TextPreview) => {
@@ -287,7 +287,7 @@ export default class PublishPicture extends Plugin {
       } catch (e) { new Notice(message(e)); }
     };
     const formats = [
-      { id: "export-note", name: "长文一键出图", icon: "images", Panel: Preview },
+      { id: "export-note", name: "导出分页图片", icon: "images", Panel: Preview },
       { id: "copy-zhihu-article", name: "发送图文到知乎", icon: "file-output", Panel: TextPreview }
     ];
     for (const {id, name, Panel} of formats) {

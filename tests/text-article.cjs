@@ -54,6 +54,7 @@ async function main() {
       window.remoteImage = imageBytes("iVBORw0KGgoAAAANSUhEUgAAAEYAAABkAQMAAAABhNT6AAAAA1BMVEUgYP/XyP8QAAAAEUlEQVR4nGNgGAWjYBQMdwAAA+gAAbOm00YAAAAASUVORK5CYII=");
       const modules = {
         obsidian: {Plugin, Modal, MarkdownView, Notice: class {}, getFrontMatterInfo: s => ({contentStart: s.match(/^---\n[\s\S]*?\n---\n/)?.[0].length || 0}),
+          sanitizeHTMLToDom: html => document.createRange().createContextualFragment(html),
           requestUrl: async url => {
             if (url !== "https://example.org/blue.png") throw Error("下载失败");
             return {arrayBuffer: remoteImage, headers: {"content-type":"image/png"}};
@@ -101,6 +102,10 @@ async function main() {
     await open("![[一.png]]");
     assert.equal((await save()).match(/<w:drawing>/g).length, 1);
     await open("# 图文分发验收\n\n## 准备材料\n\n1. 整理**原稿**\n   - 对照*资料*\n\n> 引用示例。\n\n参见[示例网站](https://example.org/)和[[内部/参考|记录]]。\n\n![[本地/红.png|120]]\n\n图一：红色横条。\n\n- 核对第二张图。\n\n![蓝](https://example.org/blue.png)\n\n图二：蓝色竖条。\n\n![[本地/红.png]]\n\n图三：再次出现的红色横条。");
+    const firstPicture = page.locator(".pp-text-preview img").first();
+    await firstPicture.locator("xpath=self::*[@src]").waitFor();
+    assert.equal(await firstPicture.getAttribute("width"), "120");
+    assert.equal(await page.locator(".pp-text-preview a").getAttribute("href"), "https://example.org/");
     await click("复制标题");
     assert.equal(await page.evaluate(() => copied), "图文分发验收");
     xml = await save();

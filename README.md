@@ -1,16 +1,18 @@
-# 长文一键出图
+# 一稿成刊
 
-在桌面版 Obsidian 中，把当前 Markdown 笔记和配图排成一组 2160 × 2880 的 PNG。第一页从文章标题和正文开始，适合按阅读顺序上传到图文平台。
+在桌面版 Obsidian 1.15.1 或更高版本中，把当前 Markdown 笔记和配图排成一组 2160 × 2880 的 PNG。第一页从文章标题和正文开始，适合按阅读顺序上传到图文平台。
 
 ## 安装
 
-1. 下载或找到 `dist/publish-picture.zip`，解压，得到 `publish-picture` 文件夹。
-2. 在 Obsidian 的「设置 → 第三方插件」里打开插件文件夹，把整个 `publish-picture` 放进去。使用默认配置时，安装后的路径是 `你的笔记库/.obsidian/plugins/publish-picture/main.js`，同目录还有 `manifest.json` 和 `styles.css`。
-3. 重新启动 Obsidian，在「设置 → 第三方插件」启用「长文一键出图」。若这是第一次安装第三方插件，先按 Obsidian 的提示启用第三方插件。
+**社区插件目录**。上架后，在桌面版 Obsidian 的「设置 → 第三方插件 → 浏览」搜索「一稿成刊」，安装并启用。
+
+**手动安装**。从 GitHub Releases 下载 `main.js`、`manifest.json` 和 `styles.css`，一起放到笔记库的 `.obsidian/plugins/yigao-chengkan/`。从源码生成的 `dist/yigao-chengkan.zip` 解压后也可以放到插件目录。重启 Obsidian 后，在「设置 → 第三方插件」启用「一稿成刊」。
+
+如果已手动安装早期的「长文一键出图」（`publish-picture`），先在同一个笔记库停用旧插件，再安装并启用「一稿成刊」。如果为旧插件设置了快捷键，请给新插件的命令重新绑定。
 
 ## 使用
 
-打开笔记，点击右上角更多菜单中的「长文一键出图」，或从命令面板搜索同名命令。滚动检查每一页，点击「导出全部」并选择文件夹。插件在里面创建以笔记命名的子目录，依次写入 `001.png`、`002.png` 等；再次导出会创建带序号的新目录。点击「打开文件夹」即可取用图片。
+打开笔记，点击右上角更多菜单中的「导出分页图片」，或从命令面板搜索同名命令。滚动检查每一页，点击「导出全部」并选择文件夹。插件在里面创建以笔记命名的子目录，依次写入 `001.png`、`002.png` 等；再次导出会创建带序号的新目录。点击「打开文件夹」即可取用图片。
 
 在预览底部选择「经典白底」或「暖纸便签」。切换后会重新分页，预览显示当前模板的导出效果。每次打开预览默认使用「经典白底」。
 
@@ -28,6 +30,23 @@
 
 知乎导入窗口标示单文件上限为 30 MB。实测关闭并重新打开知乎草稿后，图片、图注和正文仍在原位。知乎可能调整小标题级别、列表缩进和引用样式。
 
+## 网络与文件访问
+
+打开导出预览时，插件读取当前笔记和它引用的库内配图。遇到 HTTP(S) 配图时，插件会向图片链接所指的服务器请求图片。仅使用库内配图时可以离线导出。
+
+插件将生成的 PNG 或 DOCX 写到你在系统窗口中选择的位置，该位置可以在笔记库之外。笔记正文在本机处理，生成的 DOCX 由你在知乎手动导入。
+
 ## 从源码构建
 
-使用 Node.js 22 和 npm，在项目目录运行 `npm ci` 和 `npm run build`。构建会执行 TypeScript 类型检查，在 `dist/publish-picture/` 生成可安装目录，并用系统的 `zip` 命令打包。插件包已包含运行所需的依赖。
+使用 Node.js 22 和 npm，在项目目录运行 `npm ci` 和 `npm run build`。构建会执行 TypeScript 类型检查，并在根目录生成包含运行依赖的 `main.js`。运行 `npm test` 需要 Chrome、`unzip` 和可用的中文字体。运行 `npm run package` 会通过系统的 `zip` 命令生成 `dist/yigao-chengkan.zip`。
+
+## 发布新版本
+
+1. 同步更新 `manifest.json`、`package.json`、`package-lock.json` 的版本，并在 `versions.json` 记录该版本对应的最低 Obsidian 版本。
+2. 将改动推送到公开 GitHub 仓库的默认分支 `main`，确认 CI 通过。
+3. 在该提交创建带发布说明的版本标签，例如 `git tag -a 1.3.0 -m "一稿成刊 1.3.0"`，再运行 `git push origin 1.3.0`。标签应与 manifest 版本一致，格式为 `x.y.z`。Actions 完成验证后会自动公开 GitHub Release。
+4. 首次发版后，在 [Obsidian Community Directory](https://community.obsidian.md/) 关联 GitHub 账户、提交仓库，并根据审核结果发布条目。上架后的更新由目录从 GitHub Releases 检测。
+
+## 许可证
+
+本项目采用 [MIT 许可证](LICENSE)。构建后的 `main.js` 附带打包依赖的版权与许可证声明。

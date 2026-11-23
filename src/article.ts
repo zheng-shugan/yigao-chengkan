@@ -1,3 +1,4 @@
+import { sanitizeHTMLToDom } from "obsidian";
 import MarkdownIt from "markdown-it";
 
 const md = new MarkdownIt({ html: false });
@@ -35,9 +36,7 @@ md.inline.ruler.before("link", "vault-link", (state, silent) => {
 });
 
 function renderArticle(doc: Document, markdown: string, title: string, publicText = false) {
-  const template = doc.createElement("template");
-  template.innerHTML = md.render(markdown, { publicText });
-  const root = template.content;
+  const root = doc.adoptNode(sanitizeHTMLToDom(md.render(markdown, { publicText })));
   if (root.firstElementChild?.tagName !== "H1") {
     const heading = doc.createElement("h1");
     heading.textContent = title;

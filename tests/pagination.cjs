@@ -14,7 +14,13 @@ async function main() {
     const page = await browser.newPage();
     const bundle = await build({
       stdin: { contents: 'export * from "./src/layout"; export * from "./src/article";', resolveDir: process.cwd() },
-      bundle: true, write: false, format: "iife", globalName: "plugin"
+      bundle: true, write: false, format: "iife", globalName: "plugin", external: ["obsidian"]
+    });
+    // Match the fragment interface here. Sanitization itself runs in Obsidian.
+    await page.evaluate(() => {
+      window.require = () => ({
+        sanitizeHTMLToDom: html => document.createRange().createContextualFragment(html),
+      });
     });
     await page.addScriptTag({ content: bundle.outputFiles[0].text });
     const result = await page.evaluate(async () => {
@@ -139,7 +145,7 @@ async function main() {
       expect(getComputedStyle(classic).backgroundColor === "rgb(255, 255, 255)", "Warm styling carried over to classic");
       return shots.map(buffer=>Array.from(new Uint8Array(buffer)));
     });
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "publish-picture-layout-"));
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yigao-chengkan-layout-"));
     for (const [i, bytes] of result.entries()) {
       const png = Buffer.from(bytes);
       assert.equal(png.readUInt32BE(16),2160);

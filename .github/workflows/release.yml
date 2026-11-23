@@ -1,0 +1,117 @@
+name: Release
+
+on:
+  push:
+    tags: ['**']
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: ${{ !github.event.deleted }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify the release tag and default branch
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "Use a release tag in x.y.z format without a v prefix."
+            exit 1
+          fi
+          if [[ "$DEFAULT_BRANCH" != main ]] || ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "The release tag must point to a commit on the main default branch."
+            exit 1
+          fi
+          git show origin/main:manifest.json | cmp manifest.json -
+          node <<'NODE'
+          const assert = require("node:assert/strict");
+          const manifest = require("./manifest.json");
+          const lock = require("./package-lock.json");
+          assert.equal(manifest.version, process.env.RELEASE_TAG, "Tag must equal manifest version");
+          assert.equal(require("./package.json").version, manifest.version);
+          assert.equal(lock.version, manifest.version);
+          assert.equal(lock.packages[""].version, manifest.version);
+          assert.equal(require("./versions.json")[manifest.version], manifest.minAppVersion);
+          NODE
+
+  check:
+    needs: verify
+    uses: ./.github/workflows/ci.yml
+
+  draft:
+    needs: check
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    outputs:
+      assets-digest: ${{ steps.digest.outputs.value }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Build and upload the draft release
+        uses: obsidianmd/obsidian-workflows@v1
+        with:
+          mode: release
+          node-version: '22'
+          strict: 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - name: Record the built assets' digest
+        id: digest
+        run: |
+          for asset in main.js manifest.json styles.css; do test -s "$asset"; done
+          digest="$(sha256sum main.js manifest.json styles.css | sha256sum | cut -d ' ' -f 1)"
+          printf 'value=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+
+  publish:
+    needs: draft
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify assets and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          EXPECTED_DIGEST: ${{ needs.draft.outputs.assets-digest }}
+        run: |
+          git show origin/main:manifest.json | cmp manifest.json -
+          assets_dir="$(mktemp -d)"
+          gh release download "$RELEASE_TAG" --dir "$assets_dir" \
+            --pattern main.js --pattern manifest.json --pattern styles.css
+          digest="$(cd "$assets_dir" && sha256sum main.js manifest.json styles.css | sha256sum | cut -d ' ' -f 1)"
+          if [[ "$digest" != "$EXPECTED_DIGEST" ]]; then
+            echo "The uploaded release assets differ from the build."
+            exit 1
+          fi
+          git for-each-ref --format='%(contents)' "refs/tags/$RELEASE_TAG" > "$assets_dir/notes.md"
+          gh release edit "$RELEASE_TAG" --draft=false --notes-file "$assets_dir/notes.md"
