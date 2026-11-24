@@ -7,8 +7,8 @@ export const pageTemplates = {
     top: 78, bottom: 78, side: 80, fontSize: 36, lineHeight: 1.58, gap: 25,
   },
   warm: {
-    label: "暖纸便签", paper: "#fbf2e2", ink: "#372d27", accent: "#9a4c3c",
-    top: 114, bottom: 92, side: 96, fontSize: 36, lineHeight: 1.72, gap: 28,
+    label: "暖纸便签", paper: "#fffcf7", ink: "#665749", accent: "#e8e4db",
+    top: 128, bottom: 92, side: 104, fontSize: 42, lineHeight: 1.74, gap: 28,
   },
   column: {
     label: "色块专栏", paper: "#f5f5fa", ink: "#272740", accent: "#292451",
@@ -59,12 +59,15 @@ hr{height:2px;border:0;background:#d0d0d0}
 table{border-collapse:collapse;width:100%;font-size:30px}td,th{border:1px solid #bbb;padding:6px}
 ${templateCSS}
 .page[data-template="warm"]{position:relative}
-.page[data-template="warm"]::before{content:"";position:absolute;top:68px;inset-inline:${pageTemplates.warm.side}px;border-top:3px solid ${pageTemplates.warm.accent}}
-.page[data-template="warm"] a{color:#854334}
-.page[data-template="warm"] .quoted{color:#695343}
-.page[data-template="warm"] pre,.page[data-template="warm"] code{background:#f1e4d0}
-.page[data-template="warm"] hr{background:#d8c3aa}
-.page[data-template="warm"] td,.page[data-template="warm"] th{border-color:#cdb69d}
+.page[data-template="warm"]::before{content:"";position:absolute;inset:48px 34px;border:5px double ${pageTemplates.warm.accent};pointer-events:none}
+.page[data-template="warm"]>h1{font-size:52px;color:#625241}
+.page[data-template="warm"]>[data-article-title]+[data-prose]{margin-top:96px}
+.page[data-template="warm"]>[data-prose]+[data-prose]{margin-top:82px}
+.page[data-template="warm"] a{color:#71533d}
+.page[data-template="warm"] .quoted{color:inherit;border-left-color:#cbbbab}
+.page[data-template="warm"] pre,.page[data-template="warm"] code{background:#f4eee4}
+.page[data-template="warm"] hr{background:#e8e4db}
+.page[data-template="warm"] td,.page[data-template="warm"] th{border-color:#d8cdbf}
 .page[data-template="column"][data-first]>[data-article-title]{
   background:#292451;color:#faf8ff;padding:72px 52px;font-size:78px;line-height:1.16;text-wrap:balance}
 .page[data-template="column"]>h2{color:#292451;border-bottom:2px solid #c1bdd4;padding-bottom:12px}

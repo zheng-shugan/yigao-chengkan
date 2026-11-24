@@ -81,6 +81,7 @@ export function article(doc: Document, markdown: string, fallback: string) {
     const emit = (block: HTMLElement) => {
       if (depth) block.style.marginLeft = Math.min(depth, 8) * 52 + "px";
       if (quoted) block.classList.add("quoted");
+      if (!depth && !quoted && block.tagName === "P") block.dataset.prose = "";
       blocks.push(block);
     };
     const range = doc.createRange();

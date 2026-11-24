@@ -123,24 +123,49 @@ async function main() {
       const tall = await picture(500, 1600, "全页竖图");
       fixed.firstChild.dataset.width = "480";
       for (const figure of [wide, fixed, tall]) plugin.sizePicture(figure.firstChild, "warm");
-      const { blocks } = plugin.article(document, "# 清晨步行\n\n" + "沿着河岸走了一段，记下看见的风景。".repeat(100), "样本");
+      const note = [
+        "# 在清晨的河岸散步，记下一路留意到的那些小事 👀",
+        "出门时天刚亮，沿河的路上还没什么人。昨晚下过雨，石阶旁有几处积水，映出了对岸的树影。我走得比平时慢一些，听见水面上有鸟飞过。",
+        "我停在桥下等天色再亮一点。往来的人有的在跑步，有的推着自行车，都没有急着赶路。桥上的风大，底下反而很安静。",
+        "沿着原路往回走时，我发现去程没有留意的小花开在栏杆下面。前几天一直忙着赶时间，经过这里时总低头看手机，几乎没认真看过这段路。",
+        "快到家时又下起小雨，我绕去街角买了早餐。店里刚开门，柜台上的玻璃还带着一点热气，老板说雨停之后太阳大概就出来了。",
+        "回家把这一段写下来。想起那片树影和栏杆下的小花，明早有空的话，还想按今天的速度再走一次。🌿",
+      ].join("\n\n");
+      const { blocks } = plugin.article(document, note, "样本");
       const warm = await verify(blocks, "warm");
-      expect(warm.length >= 2, "Warm text should span multiple pages");
-      const warmBlob = await plugin.renderPNG(warm[0]);
+      expect(warm.length === 2, "Warm note should span two pages");
+      const [warmTitle, firstPara, secondPara] = warm[0].children;
+      expect(getComputedStyle(warmTitle).fontSize === "52px", "Warm title sizing changed");
+      expect(getComputedStyle(warmTitle).color === "rgb(98, 82, 65)", "Warm title color changed");
+      expect(getComputedStyle(firstPara).fontSize === "42px", "Warm body sizing changed");
+      expect(getComputedStyle(firstPara).color === "rgb(102, 87, 73)", "Warm body color changed");
+      expect(firstPara.getBoundingClientRect().top - warmTitle.getBoundingClientRect().bottom === 96, "Warm title gap changed");
+      expect(secondPara.getBoundingClientRect().top - firstPara.getBoundingClientRect().bottom === 82, "Warm prose gap changed");
+      for (const page of warm) {
+        const blob = await plugin.renderPNG(page);
+        const bitmap = await createImageBitmap(blob);
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const pixel = canvas.getContext("2d");
+        pixel.drawImage(bitmap, 0, 0);
+        expect(bitmap.width === 2160 && bitmap.height === 2880, "Warm PNG dimensions changed");
+        const colorAt = (x, y) => [...pixel.getImageData(x, y, 1, 1).data].join();
+        const frame = "232,228,219,255";
+        expect(colorAt(0, 0) === "255,252,247,255", "Warm paper missing from PNG");
+        const top = Array.from({length: 10}, (_, i) => colorAt(200, 96 + i) === frame);
+        expect(top.filter((painted, i) => painted && !top[i - 1]).length === 2, "Warm double rule missing from PNG");
+        expect(colorAt(68, 190) === frame && colorAt(2091, 190) === frame && colorAt(200, 2783) === frame, "Warm frame is incomplete");
+        bitmap.close();
+        shots.push(await blob.arrayBuffer());
+      }
       await verify([filler(1000), wide, caption], "warm");
       expect(wide.parentElement === caption.parentElement, "Warm image lost its caption");
-      expect(wide.firstChild.getBoundingClientRect().width <= 888, "Warm image exceeded content width");
+      expect(caption.getBoundingClientRect().top - wide.getBoundingClientRect().bottom === 28, "Warm caption gap changed");
+      expect(wide.firstChild.getBoundingClientRect().width <= 872, "Warm image exceeded content width");
       await verify([tall, fixed], "warm");
       expect(fixed.firstChild.getBoundingClientRect().width === 480, "Warm image lost fixed width");
-      expect(Math.abs(tall.firstChild.getBoundingClientRect().height - 1234) < .1, "Tall image exceeded warm content height");
-      const bitmap = await createImageBitmap(warmBlob);
-      const pixel = document.createElement("canvas").getContext("2d");
-      pixel.drawImage(bitmap, 0, 0);
-      expect(bitmap.width === 2160 && bitmap.height === 2880, "Warm PNG dimensions changed");
-      expect([...pixel.getImageData(0, 0, 1, 1).data].join() === "251,242,226,255", "Warm paper missing from PNG");
-      expect([...pixel.getImageData(200, 137, 1, 1).data].join() === "154,76,60,255", "Warm rule missing from PNG");
-      bitmap.close();
-      shots.push(await warmBlob.arrayBuffer());
+      expect(Math.abs(tall.firstChild.getBoundingClientRect().height - 1220) < .1, "Tall image exceeded warm content height");
       const [classic] = await verify([para("切回经典白底")]);
       expect(getComputedStyle(classic).backgroundColor === "rgb(255, 255, 255)", "Warm styling carried over to classic");
       const story = "# 海边训练日记\n\n## 配速与补给\n\n### 第一圈\n\n- 慢跑热身\n- 沿海往返\n\n> 海风影响配速。\n\n"
@@ -159,7 +184,12 @@ async function main() {
         expect(output.slice(1).every(p => !p.hasAttribute("data-first")), id + " repeated the first-page treatment");
         const title = output[0].querySelector("[data-article-title]");
         const section = output[0].querySelector("h2");
-        if (id === "column") {
+        if (id === "warm") {
+          const items = output[0].querySelectorAll("[data-marker]");
+          const quote = output[0].querySelector(".quoted");
+          expect(items[1].getBoundingClientRect().top - items[0].getBoundingClientRect().bottom === 28, "Warm list gap changed");
+          expect(quote.getBoundingClientRect().top - items[1].getBoundingClientRect().bottom === 28, "Warm quote gap changed");
+        } else if (id === "column") {
           expect(getComputedStyle(title).backgroundColor === "rgb(41, 36, 81)", "Column title panel missing");
           expect(getComputedStyle(section).borderBottomWidth === "2px", "Column section rule missing");
         } else if (id === "grid") {
@@ -177,7 +207,7 @@ async function main() {
       const png = Buffer.from(bytes);
       assert.equal(png.readUInt32BE(16),2160);
       assert.equal(png.readUInt32BE(20),2880);
-      await fs.writeFile(path.join(dir, ["100", "85", "75", "warm"][i] + ".png"), png);
+      await fs.writeFile(path.join(dir, ["100", "85", "75", "warm", "warm-next"][i] + ".png"), png);
     }
     console.log("全部分页用例通过。抽查 PNG：" + dir);
   } finally { await browser.close(); }
