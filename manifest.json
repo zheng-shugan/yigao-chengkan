@@ -1,9 +1,9 @@
 {
   "id": "yigao-chengkan",
   "name": "Draft to Pages",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "minAppVersion": "1.15.1",
-  "description": "将当前笔记导出为分页 PNG，或生成可导入知乎的含图 Word 文档.",
+  "description": "将 Markdown 笔记和配图导出为分页 PNG 或整篇长图，支持正文模板与独立封面.",
   "author": "Publish Picture",
   "isDesktopOnly": true
 }

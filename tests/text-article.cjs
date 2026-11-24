@@ -8,7 +8,11 @@ const {execFileSync} = require("node:child_process");
 
 async function main() {
   const bundle = await build({
-    entryPoints: ["src/main.ts"], bundle: true, write: false, format: "iife",
+    stdin: {
+      contents: 'export { default } from "./src/main"; export { TextPreview } from "./src/zhihu-preview";',
+      resolveDir: process.cwd(),
+    },
+    bundle: true, write: false, format: "iife",
     globalName: "tested", platform: "node", external: ["obsidian", "electron", "@electron/remote", "node:*"]
   });
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "publish-zhihu-"));
@@ -40,9 +44,9 @@ async function main() {
       class Modal {
         constructor(app) {
           this.app = app;
-          this.modalEl = document.body.createDiv();
+          this.modalEl = document.body.createDiv({cls:"modal"});
           this.titleEl = this.modalEl.createEl("h2");
-          this.contentEl = this.modalEl.createDiv();
+          this.contentEl = this.modalEl.createDiv({cls:"modal-content"});
         }
         open() { this.onOpen(); }
         close() { this.onClose(); this.modalEl.remove(); }
@@ -94,16 +98,32 @@ async function main() {
       view.getMode = () => "source";
       window.plugin = new tested.default();
       window.plugin.app = {
-        workspace: {getActiveViewOfType: () => view, on() {}},
+        workspace: {getActiveViewOfType: () => view, on: (event, callback) => { if (event === "file-menu") window.fileMenu = callback; }},
         metadataCache: {getFirstLinkpathDest: p => p === "缺图.png" ? null : ({ path:p, extension:p.split(".").pop() })},
         vault: {readBinary: f => f.path === "损坏.png" ? new ArrayBuffer(2) : localImage}
       };
       plugin.onload();
     });
+    const entries = await page.evaluate(() => {
+      const menuTitles = [];
+      const menu = {addItem: create => create({
+        setTitle(title) { menuTitles.push(title); return this; },
+        setIcon() { return this; },
+        onClick(callback) { window.openFromMenu = callback; },
+      })};
+      window.fileMenu(menu, testView.file, "more-options", {view:testView});
+      return {commands: Object.entries(commands).map(([id, cmd]) => [id, cmd.name]), menuTitles};
+    });
+    assert.deepEqual(entries, {commands: [["export-note", "打开预览"]], menuTitles: ["一稿成刊"]});
+    await page.evaluate(() => { window.source = "# 验收"; window.openFromMenu(); });
+    await page.getByRole("heading", {name:"一稿成刊（Draft to Pages）"}).waitFor();
+    await page.evaluate(() => plugin.onunload());
+
     const open = async source => page.evaluate(s => {
-      plugin.onunload();
-      window.source = s;
-      commands["copy-zhihu-article"].checkCallback(false);
+      window.zhihuPreview?.close();
+      const {contentStart} = require("obsidian").getFrontMatterInfo(s);
+      window.zhihuPreview = new tested.TextPreview(plugin.app, testView.file, s.slice(contentStart), () => {});
+      window.zhihuPreview.open();
     }, source);
     const click = label => page.getByRole("button", {name: label, exact: true}).click();
     const save = async () => {
@@ -156,6 +176,7 @@ async function main() {
     await click("重新读取配图");
     assert.equal((await save()).match(/<w:drawing>/g).length,1);
     console.log("知乎 DOCX 用例通过：纯文字、单图、20 图、本地和网络图、重复引用、损坏和重试。");
+    await page.evaluate(() => window.zhihuPreview.close());
     await verifyCovers(page, dir);
     await verifyLongImage(page, dir);
   } finally { await browser.close(); await fs.rm(dir,{recursive:true,force:true}); }
@@ -185,11 +206,14 @@ async function verifyCovers(page, dir) {
   const open = source => openPicturePreview(page, source);
   await page.addStyleTag({path: "styles.css"});
   await open("# " + title + "\n\n## 准备工作\n\n![[一.png]]\n\n![蓝](https://example.org/blue.png)\n\n" + "校对正文分页。".repeat(240));
+  await page.getByRole("heading", {name:"一稿成刊（Draft to Pages）"}).waitFor();
   const exportButton = page.getByRole("button", {name: "导出全部"});
   const toggle = page.getByRole("checkbox", {name: "添加封面"});
   const selectTemplate = name => page.getByRole("button", {name, exact:true}).click();
-  const cover = page.locator(".pp-cover-preview img[src]");
-  const body = page.locator(".pp-pages figure:not(.pp-cover-preview) img");
+  const coverTab = page.getByRole("tab", {name:"封面设置"});
+  const templateTab = page.getByRole("tab", {name:"正文模板"});
+  const cover = page.locator('.pp-preview-image[alt="封面"][src]');
+  const body = page.locator('.pp-thumbnails .pp-thumbnail:not([aria-label="封面"]) img');
   const heading = page.getByRole("textbox", {name: "封面标题"});
   const subtitle = page.getByRole("textbox", {name: "副标题（可选）"});
   const choice = page.getByRole("combobox", {name: "封面配图"});
@@ -202,6 +226,7 @@ async function verifyCovers(page, dir) {
   };
 
   await ready();
+  await coverTab.click();
   assert.equal(await toggle.isChecked(), false);
   const bodySources = await sources();
   assert.ok(bodySources.length > 1);
@@ -215,7 +240,7 @@ async function verifyCovers(page, dir) {
   const statement = await previewBytes(cover);
   assert.equal(statement.readUInt32BE(16), 2160);
   assert.equal(statement.readUInt32BE(20), 2880);
-  assert.equal(await page.locator(".pp-pages img").first().getAttribute("alt"), "封面");
+  assert.equal(await page.locator(".pp-preview-image").getAttribute("alt"), "封面");
   await exportPages();
   const withCover = path.join(dir, "验收样本");
   assert.deepEqual(await fs.readFile(path.join(withCover, "001.png")), statement);
@@ -237,14 +262,14 @@ async function verifyCovers(page, dir) {
 
   for (const longTitle of ["特别长的封面标题".repeat(20), "unbrokenword".repeat(35)]) {
     await heading.fill(longTitle);
-    await page.getByText("标题太长，请缩短到三行以内。").waitFor();
+    await page.locator(".pp-cover-editor").getByText("标题太长，请缩短到三行以内。").waitFor();
     assert.equal(await exportButton.isDisabled(), true);
     assert.equal(await cover.count(), 0);
   }
   await heading.fill(title);
   await ready();
   await localInput.setInputFiles({name: "损坏.png", mimeType: "image/png", buffer: Buffer.from("broken")});
-  await page.getByText("无法读取这张封面配图，请重新选图。").waitFor();
+  await page.locator(".pp-cover-editor").getByText("无法读取这张封面配图，请重新选图。").waitFor();
   assert.equal(await exportButton.isDisabled(), true);
   const png = Buffer.from(await page.evaluate(() => Array.from(new Uint8Array(localImage))));
   await localInput.setInputFiles({name: "封面专用.png", mimeType: "image/png", buffer: png});
@@ -282,17 +307,19 @@ async function verifyCovers(page, dir) {
 
   await open("只有正文，标题使用文件名。");
   await ready();
+  await coverTab.click();
   assert.equal(await toggle.isChecked(), false);
   await toggle.check();
   await ready();
   assert.equal(await heading.inputValue(), "验收样本");
   await selectTemplate("截图导读");
-  await page.getByText("请选择一张封面配图。").waitFor();
+  await page.locator(".pp-cover-editor").getByText("请选择一张封面配图。").waitFor();
   assert.equal(await exportButton.isDisabled(), true);
   await localInput.setInputFiles({name: "纯文字笔记的封面.png", mimeType:"image/png", buffer:png});
   await ready();
   const localCover = await cover.getAttribute("src");
   const classicPages = await sources();
+  await templateTab.click();
   await selectTemplate("暖纸便签");
   await ready();
   assert.equal(await cover.getAttribute("src"), localCover);
@@ -302,13 +329,14 @@ async function verifyCovers(page, dir) {
   const cards = page.getByRole("group", {name:"正文模板"}).getByRole("button");
   assert.equal(await cards.count(), 5);
   assert.equal(await cards.locator(".pp-template-sample").count(), 10);
+  await coverTab.click();
   await toggle.check();
   await ready();
   const author = page.getByRole("textbox", {name:"作者（可选）"});
   const reading = page.getByRole("checkbox", {name:"显示字数与预计阅读时间"});
   assert.equal(await reading.isChecked(), false);
   await page.evaluate(() => {
-    const frame = document.querySelector(".pp-cover-editor iframe").contentDocument;
+    const frame = document.querySelector(".pp-cover-measure").contentDocument;
     new MutationObserver(changes => {
       const added = changes.flatMap(change => Array.from(change.addedNodes));
       const cover = added.find(node => node.classList?.contains("cover"));
@@ -321,7 +349,7 @@ async function verifyCovers(page, dir) {
   await ready();
   assert.deepEqual(await page.evaluate(() => latestMetadata), [name, "12 字 · 预计 1 分钟"]);
   await author.fill(name + "者");
-  await page.getByText("作者最多输入 20 个字符。").waitFor();
+  await page.locator(".pp-cover-editor").getByText("作者最多输入 20 个字符。").waitFor();
   assert.equal(await exportButton.isDisabled(), true);
   await author.fill("海边跑者");
   await selectTemplate("柿红");
@@ -396,8 +424,14 @@ async function verifyLongImage(page, dir) {
   const longMode = page.getByRole("button", {name:"整篇长图", exact:true});
   const pageMode = page.getByRole("button", {name:"分页图片", exact:true});
   const warm = page.getByRole("button", {name:"暖纸便签"});
+  const coverTab = page.getByRole("tab", {name:"封面设置"});
+  const templateTab = page.getByRole("tab", {name:"正文模板"});
+  const coverThumb = page.getByRole("button", {name:"封面", exact:true});
+  const thumbs = page.getByRole("group", {name:"页面缩略图"});
+  const stage = page.getByRole("region", {name:"图片预览"});
+  const largeImage = stage.locator("img");
   const coverToggle = page.getByRole("checkbox", {name:"添加封面"});
-  const cover = page.locator(".pp-cover-preview img[src]");
+  const cover = page.locator('.pp-preview-image[alt="封面"][src]');
   const coverTitle = page.getByRole("textbox", {name:"封面标题"});
   const longPreview = page.getByRole("img", {name:"文章长图"});
   const ready = () => page.waitForFunction(() => document.querySelector(".pp-toolbar .mod-cta")?.disabled === false);
@@ -405,10 +439,32 @@ async function verifyLongImage(page, dir) {
   assert.equal(await pageMode.getAttribute("aria-pressed"), "true");
   await warm.click();
   await ready();
+  await thumbs.getByRole("button", {name:"第 2 页"}).click();
+  assert.equal(await largeImage.getAttribute("alt"), "第 2 页");
+  await stage.press("ArrowLeft");
+  assert.equal(await largeImage.getAttribute("alt"), "第 1 页");
+  await page.getByRole("button", {name:"下一页"}).click();
+  assert.equal(await largeImage.getAttribute("alt"), "第 2 页");
+  const fit = await largeImage.boundingBox();
+  await choose("适合宽度");
+  assert.ok((await largeImage.boundingBox()).width > fit.width);
+  await choose("适合窗口");
+  await choose("章节提纲");
+  await ready();
+  assert.equal(await largeImage.getAttribute("alt"), "第 2 页");
+  await warm.click();
+  await ready();
+  await coverTab.click();
   await coverToggle.check();
   await coverTitle.fill("独立封面");
   await ready();
   const coverSrc = await cover.getAttribute("src");
+  await coverTitle.press("ArrowRight");
+  assert.equal(await largeImage.getAttribute("alt"), "封面");
+  await thumbs.getByRole("button", {name:"第 2 页"}).click();
+  await coverTab.click();
+  assert.equal(await largeImage.getAttribute("alt"), "封面");
+  await thumbs.getByRole("button", {name:"第 2 页"}).click();
 
   await longMode.click();
   await ready();
@@ -416,7 +472,12 @@ async function verifyLongImage(page, dir) {
   assert.equal(await longMode.getAttribute("aria-pressed"), "true");
   assert.equal(await cover.isVisible(), false);
   assert.equal(await coverToggle.isVisible(), false);
-  assert.equal(await page.locator(".pp-pages figure:visible").count(), 1);
+  assert.equal(await thumbs.isVisible(), false);
+  await longPreview.evaluate(img => img.decode());
+  assert.ok(await stage.evaluate(el => {
+    el.scrollTop = el.scrollHeight;
+    return el.scrollTop > 0 && el.scrollHeight - el.scrollTop - el.clientHeight < 2;
+  }));
   const png = await previewBytes(longPreview);
   assert.equal(png.readUInt32BE(16), 2160);
   assert.ok(png.readUInt32BE(20) > 2880);
@@ -440,13 +501,15 @@ async function verifyLongImage(page, dir) {
   assert.deepEqual(await fs.readFile(target), png);
   await pageMode.click();
   await ready();
+  assert.equal(await largeImage.getAttribute("alt"), "第 2 页");
+  await coverTab.click();
   assert.equal(await coverToggle.isChecked(), true);
   assert.equal(await coverTitle.inputValue(), "独立封面");
   assert.equal(await cover.getAttribute("src"), coverSrc);
 
   // Trigger the height guard without first rendering dozens of ordinary pages.
   await page.evaluate(() => {
-    const doc = document.querySelector(".pp-modal > div > iframe.pp-measure").contentDocument;
+    const doc = document.querySelector("iframe.pp-measure:not(.pp-cover-measure)").contentDocument;
     const style = doc.createElement("style");
     style.textContent = ".pp-long-page { min-height: 30001px; }";
     doc.head.append(style);
@@ -457,8 +520,23 @@ async function verifyLongImage(page, dir) {
   assert.equal(await longPreview.count(), 0);
   await pageMode.click();
   await ready();
+  await coverThumb.click();
   assert.equal(await cover.isVisible(), true);
-  console.log("长图用例通过：模板切换、保存与取消、封面恢复、超限回退。");
+  await page.setViewportSize({width:760,height:580});
+  assert.equal(await templateTab.isVisible(), false);
+  await choose("设置");
+  await coverTab.click();
+  await choose("全幅照片");
+  await ready();
+  assert.ok(await page.locator(".pp-settings-panels").evaluate(el => el.scrollHeight > el.clientHeight));
+  const drawer = await page.locator(".pp-settings").boundingBox();
+  const preview = await largeImage.boundingBox();
+  assert.ok(preview.x + preview.width <= drawer.x);
+  await page.getByRole("button", {name:"关闭设置"}).press("Escape");
+  assert.equal(await templateTab.isVisible(), false);
+  assert.equal(await page.evaluate(() => document.activeElement.textContent), "设置");
+  assert.equal(await page.getByRole("button", {name:"导出全部"}).isVisible(), true);
+  console.log("预览工作区用例通过：缩略图、键盘翻页、缩放、设置抽屉、长图保存与分页恢复。");
 }
 
 main().catch(e => {console.error(e); process.exitCode = 1;});

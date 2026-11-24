@@ -2,15 +2,11 @@ import { readFile } from "node:fs/promises";
 import { build } from "esbuild";
 
 // Include the notices in main.js so they travel with both installation methods.
-// docx's published JavaScript already incorporates fflate and nanoid.
 const bundledLicenses = [
-  ["docx", "LICENSE"],
   ["entities", "LICENSE"],
-  ["fflate", "LICENSE"],
   ["linkify-it", "LICENSE"],
   ["markdown-it", "LICENSE"],
   ["mdurl", "LICENSE"],
-  ["nanoid", "LICENSE"],
   ["punycode.js", "LICENSE-MIT.txt"],
   ["uc.micro", "LICENSE.txt"],
 ];

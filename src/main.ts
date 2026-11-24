@@ -1,29 +1,13 @@
-import { App, MarkdownView, Modal, Notice, Plugin, requestUrl, TFile, getFrontMatterInfo } from "obsidian";
-import { article, textArticle } from "./article";
+import { App, MarkdownView, Modal, Notice, Plugin, TFile, getFrontMatterInfo } from "obsidian";
+import { article } from "./article";
 import { defaultTemplate, exportScale, pageHeight, pageTemplates, pageWidth, paginate, pictureBounds, renderLongPNG, renderPNG, sizePicture, TemplateId } from "./layout";
 import { CoverEditor } from "./cover-editor";
-import { preparePicture, wordArticle, Picture } from "./word";
+import { PreviewWorkspace } from "./preview-workspace";
+import { readPicture } from "./pictures";
 import { safeFileName, saveFile, writePages } from "./output";
 
+const brandName = "一稿成刊";
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
-
-async function readPicture(app: App, file: TFile, source: string) {
-  let bytes: ArrayBuffer;
-  let type = "";
-  if (/^https?:\/\//i.test(source)) {
-    const response = await requestUrl(source);
-    bytes = response.arrayBuffer;
-    type = response.headers["content-type"]?.split(";")[0] || "";
-  } else {
-    let path = source;
-    try { path = decodeURIComponent(path); } catch { /* Literal percent in a vault filename. */ }
-    const attachment = app.metadataCache.getFirstLinkpathDest(path, file.path);
-    if (!attachment) throw new Error("找不到本地附件");
-    bytes = await app.vault.readBinary(attachment);
-    type = attachment.extension.toLowerCase() === "svg" ? "image/svg+xml" : "";
-  }
-  return new Blob([bytes], { type });
-}
 
 async function pictureDataURL(blob: Blob, width: number, height: number): Promise<string> {
   const url = URL.createObjectURL(blob);
@@ -68,8 +52,8 @@ class Preview extends Modal {
   constructor(app: App, private file: TFile, private source: string, private dispose: () => void) { super(app); }
 
   async onOpen() {
-    this.modalEl.addClass("pp-modal");
-    this.titleEl.setText("导出文章图片");
+    this.modalEl.classList.add("pp-modal", "pp-workspace-modal");
+    this.titleEl.setText(brandName + "（Draft to Pages）");
     const bar = this.contentEl.createDiv({ cls: "pp-toolbar" });
     const modePicker = bar.createDiv({ cls: "pp-export-modes", attr: { role: "group", "aria-label": "导出模式" } });
     const modeButtons = new Map<ExportMode, HTMLButtonElement>();
@@ -82,10 +66,8 @@ class Preview extends Modal {
     const status = bar.createDiv({ cls: "pp-status", text: "正在排版…" });
     status.setAttribute("role", "status");
     const button = bar.createEl("button", { cls: "mod-cta", text: "导出全部" });
-    const coverHost = this.contentEl.createDiv();
-    const gallery = this.contentEl.createDiv({ cls: "pp-pages" });
-    const bodyGallery = gallery.createDiv();
-    const picker = this.contentEl.createDiv({ cls: "pp-templates", attr: { role: "group", "aria-label": "正文模板" } });
+    const workspace = new PreviewWorkspace(this.contentEl, bar);
+    const picker = workspace.templates.createDiv({ cls: "pp-templates", attr: { role: "group", "aria-label": "正文模板" } });
     const cards = new Map<TemplateId, HTMLButtonElement>();
     for (const id of Object.keys(pageTemplates) as TemplateId[]) {
       const template = pageTemplates[id];
@@ -137,12 +119,13 @@ class Preview extends Modal {
       }
       if (failures.size) {
         status.setText("配图读取失败，请修复后重新生成。");
-        const list = bodyGallery.createEl("ul");
+        const list = workspace.stage.createEl("ul", { cls: "pp-preview-errors" });
         for (const [src, why] of failures) list.createEl("li", { text: src + " · " + why });
         return;
       }
       const cover = this.cover = new CoverEditor(
-        coverHost, gallery, { title, wordCount }, cache, file => pictureDataURL(file, pageWidth, pageHeight), () => {
+        workspace.coverSettings, this.contentEl, { title, wordCount }, cache, file => pictureDataURL(file, pageWidth, pageHeight), feedback => {
+          workspace.setCover(cover.enabled, cover.previewURL, feedback);
           if (mode === "long") return;
           const open = bar.querySelector(".pp-open");
           if (open) {
@@ -154,10 +137,10 @@ class Preview extends Modal {
       );
       const render = async () => {
         setBusy(true);
-        bodyGallery.replaceChildren();
-        this.clearPages();
+        workspace.stage.setAttribute("aria-busy", "true");
         bar.querySelector(".pp-open")?.remove();
         status.setText("正在排版…");
+        const nextUrls: string[] = [];
         try {
           const copies = blocks.map(block => doc.importNode(block, true));
           await Promise.all(copies.flatMap(block => Array.from(block.querySelectorAll("img"), async img => {
@@ -180,25 +163,23 @@ class Preview extends Modal {
               blobs.push(blob);
             }
           }
-          const figures = blobs.map((blob, i) => {
-            const url = URL.createObjectURL(blob);
-            this.urls.push(url);
-            const figure = gallery.ownerDocument.createElement("figure");
-            const alt = mode === "long" ? "文章长图" : "第 " + (i + 1) + " 页";
-            figure.createEl("img", { attr: { src: url, alt } });
-            if (mode === "pages") figure.createEl("figcaption", { text: (i + 1) + " / " + blobs.length });
-            return figure;
-          });
-          bodyGallery.replaceChildren(...figures);
-          gallery.scrollTop = 0;
+          for (const blob of blobs) nextUrls.push(URL.createObjectURL(blob));
+          workspace.setImages(nextUrls, mode === "long");
+          this.clearPages();
+          this.urls = nextUrls;
           this.blobs = blobs;
           status.setText(mode === "long" ? longSize : "共 " + blobs.length + " 页正文");
         } catch (e) {
+          nextUrls.forEach(url => URL.revokeObjectURL(url));
+          workspace.setImages([], mode === "long");
           this.clearPages();
           if (!this.closed) status.setText("排版失败：" + message(e));
         } finally {
           doc.body.replaceChildren();
-          if (!this.closed) setBusy(false);
+          if (!this.closed) {
+            workspace.stage.setAttribute("aria-busy", "false");
+            setBusy(false);
+          }
         }
       };
       for (const [id, card] of cards) {
@@ -213,7 +194,7 @@ class Preview extends Modal {
         control.onclick = () => {
           if (busy || id === mode) return;
           mode = id;
-          this.modalEl.classList.toggle("pp-long-mode", id === "long");
+          workspace.setMode(id === "long");
           button.setText(id === "long" ? "导出长图" : "导出全部");
           for (const [key, option] of modeButtons) option.setAttribute("aria-pressed", String(key === id));
           void render();
@@ -283,116 +264,29 @@ class Preview extends Modal {
   }
 }
 
-class TextPreview extends Modal {
-  private closed = false;
-  private pictures = new Map<string, Picture>();
-  constructor(app: App, private file: TFile, private source: string, private dispose: () => void) { super(app); }
-
-  async onOpen() {
-    this.modalEl.addClass("pp-modal");
-    this.titleEl.setText("发送图文到知乎");
-    const { title, body } = textArticle(this.contentEl.ownerDocument, this.source, this.file.basename);
-    const bar = this.contentEl.createDiv({ cls: "pp-toolbar" });
-    const button = bar.createEl("button", { cls: "mod-cta", text: "生成知乎导入文档" });
-    const copy = bar.createEl("button", { text: "复制标题" });
-    copy.onclick = () => {
-      try { require("electron").clipboard.writeText(title); new Notice("已复制标题"); }
-      catch (e) { new Notice("复制失败：" + message(e)); }
-    };
-    const status = this.contentEl.createDiv({ cls: "pp-text-status", attr: { role: "status" } });
-    const preview = this.contentEl.createDiv({ cls: "pp-text-preview" });
-    preview.createEl("h1", {text: title});
-    preview.append(body);
-    const images = Array.from(body.querySelectorAll("img"));
-    const prepare = async () => {
-      button.disabled = true;
-      const failures = [];
-      for (const [i, img] of images.entries()) {
-        const source = img.dataset.source!;
-        try {
-          let picture = this.pictures.get(source);
-          if (!picture) {
-            status.setText("正在读取配图 " + (i + 1) + " / " + images.length);
-            picture = await preparePicture(await readPicture(this.app, this.file, source));
-            if (this.closed) { URL.revokeObjectURL(picture.url); return; }
-            this.pictures.set(source, picture);
-          }
-          img.src = picture.url;
-          img.width = Number(img.dataset.width) || picture.width;
-        } catch (e) { failures.push("配图 " + (i + 1) + "：" + source + " · " + message(e)); }
-        if (this.closed) return;
-      }
-      button.disabled = false;
-      if (failures.length) {
-        status.setText(failures.join("\n"));
-        button.setText("重新读取配图");
-        button.onclick = prepare;
-        return;
-      }
-      status.setText("在知乎空白文章中选择「导入 → 导入文档」，选取生成的 .docx。");
-      button.setText("生成知乎导入文档");
-      button.onclick = async () => {
-        button.disabled = true;
-        try {
-          const doc = await wordArticle(body, title, this.pictures);
-          if (this.closed) return;
-          if (doc.size > 30_000_000) throw new Error("文档超过知乎的 30 MB 限制，请缩小原稿中的配图再生成。");
-          const electron = require("electron");
-          const remote = electron.remote ?? require("@electron/remote");
-          const result = await remote.dialog.showSaveDialog(remote.getCurrentWindow(), {
-            title: "保存知乎导入文档", defaultPath: this.file.basename.replace(/[<>:"/\\|?*]/g, "_") + ".docx",
-            filters: [{ name: "Word 文档", extensions: ["docx"] }]
-          });
-          if (this.closed || result.canceled || !result.filePath) return;
-          await saveFile(result.filePath, doc);
-          status.setText("已保存 " + result.filePath + "。在知乎空白文章中选择「导入 → 导入文档」。");
-        } catch (e) { status.setText("生成失败：" + message(e)); }
-        finally { button.disabled = false; }
-      };
-    };
-    await prepare();
-  }
-
-  onClose() {
-    this.closed = true;
-    for (const picture of this.pictures.values()) URL.revokeObjectURL(picture.url);
-    this.pictures.clear();
-    this.contentEl.empty();
-    this.dispose();
-  }
-}
-
 export default class YigaoChengkan extends Plugin {
   private previews = new Set<Modal>();
   onload() {
-    const show = async (view: MarkdownView, Panel: typeof Preview | typeof TextPreview) => {
+    const show = async (view: MarkdownView) => {
       const file = view.file;
       if (!file) return;
       try {
         const source = view.getMode() === "source" ? view.editor.getValue() : await this.app.vault.cachedRead(file);
-        const modal: Modal = new Panel(this.app, file, source.slice(getFrontMatterInfo(source).contentStart), () => this.previews.delete(modal));
+        const modal: Modal = new Preview(this.app, file, source.slice(getFrontMatterInfo(source).contentStart), () => this.previews.delete(modal));
         this.previews.add(modal);
         modal.open();
       } catch (e) { new Notice(message(e)); }
     };
-    const formats = [
-      { id: "export-note", name: "导出分页图片", icon: "images", Panel: Preview },
-      { id: "copy-zhihu-article", name: "发送图文到知乎", icon: "file-output", Panel: TextPreview }
-    ];
-    for (const {id, name, Panel} of formats) {
-      this.addCommand({ id, name, checkCallback: checking => {
-        const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-        if (!view?.file) return false;
-        if (!checking) void show(view, Panel);
-        return true;
-      } });
-    }
+    this.addCommand({ id: "export-note", name: "打开预览", checkCallback: checking => {
+      const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+      if (!view?.file) return false;
+      if (!checking) void show(view);
+      return true;
+    } });
     this.registerEvent(this.app.workspace.on("file-menu", (menu, file, _source, leaf) => {
       const view = leaf?.view ?? this.app.workspace.getActiveViewOfType(MarkdownView);
       if (!(view instanceof MarkdownView) || file !== view.file) return;
-      for (const {name, icon, Panel} of formats) {
-        menu.addItem(item => item.setTitle(name).setIcon(icon).onClick(() => void show(view, Panel)));
-      }
+      menu.addItem(item => item.setTitle(brandName).setIcon("images").onClick(() => void show(view)));
     }));
   }
   onunload() { for (const preview of this.previews) preview.close(); }

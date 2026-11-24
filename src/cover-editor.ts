@@ -10,8 +10,8 @@ export class CoverEditor {
   private readonly toggle: HTMLInputElement;
 
   constructor(
-    host: HTMLElement, gallery: HTMLElement, article: { title: string; wordCount: number }, pictures: ReadonlyMap<string, string>,
-    prepareLocalPicture: (file: File) => Promise<string>, changed: () => void,
+    host: HTMLElement, measurementHost: HTMLElement, article: { title: string; wordCount: number }, pictures: ReadonlyMap<string, string>,
+    prepareLocalPicture: (file: File) => Promise<string>, changed: (feedback?: string) => void,
   ) {
     const view = host.ownerDocument.defaultView!;
     const fieldset = this.fieldset = host.createEl("fieldset", { cls: "pp-cover-editor" });
@@ -68,13 +68,7 @@ export class CoverEditor {
     const horizontal = cropSelect("水平裁切", [["left", "靠左"], ["center", "居中"], ["right", "靠右"]]);
     const vertical = cropSelect("垂直裁切", [["top", "靠上"], ["center", "居中"], ["bottom", "靠下"]]);
     const status = controls.createDiv({ cls: "pp-cover-status", attr: { role: "status" } });
-    const frame = fieldset.createEl("iframe", { cls: "pp-measure", attr: { "aria-hidden": "true", tabindex: "-1" } });
-
-    const figure = gallery.createEl("figure", { cls: "pp-cover-preview", prepend: true });
-    figure.hidden = true;
-    const canvas = figure.createDiv({ cls: "pp-cover-canvas" });
-    const preview = canvas.createEl("img", { attr: { alt: "封面" } });
-    figure.createEl("figcaption", { text: "封面" });
+    const frame = measurementHost.createEl("iframe", { cls: "pp-measure pp-cover-measure", attr: { "aria-hidden": "true", tabindex: "-1" } });
 
     let localFile: File | undefined;
     let localOption: HTMLOptionElement | undefined;
@@ -82,13 +76,11 @@ export class CoverEditor {
     const update = () => {
       const revision = ++this.revision;
       view.clearTimeout(this.timer);
-      this.clearPreview();
-      figure.hidden = !enabled.checked;
-      preview.removeAttribute("src");
-      changed();
-
+      this.blob = undefined;
       if (!enabled.checked) {
+        this.clearPreview();
         status.setText("");
+        changed();
         return;
       }
       const template = this.template;
@@ -107,6 +99,7 @@ export class CoverEditor {
         } : undefined,
       };
       status.setText("正在生成封面…");
+      changed("正在生成封面…");
       this.timer = view.setTimeout(async () => {
         try {
           if (hasImage && file) {
@@ -120,13 +113,17 @@ export class CoverEditor {
           if (revision !== this.revision) return;
           const blob = await renderCover(frame.contentDocument!, content);
           if (revision !== this.revision) return;
+          this.clearPreview();
           this.url = URL.createObjectURL(blob);
           this.blob = blob;
-          preview.src = this.url;
           status.setText("");
         } catch (error) {
           if (revision !== this.revision) return;
-          status.setText(error instanceof Error ? error.message : "封面生成失败，请重新选择模板。");
+          this.clearPreview();
+          const feedback = error instanceof Error ? error.message : "封面生成失败，请重新选择模板。";
+          status.setText(feedback);
+          changed(feedback);
+          return;
         }
         changed();
       }, 120);
@@ -157,7 +154,6 @@ export class CoverEditor {
 
     enabled.onchange = () => {
       controls.hidden = !enabled.checked;
-      if (enabled.checked) gallery.scrollTop = 0;
       update();
     };
     for (const [id, card] of cards) {
@@ -168,7 +164,6 @@ export class CoverEditor {
         imageControls.hidden = !coverTemplates[id].image;
         cropControls.hidden = id !== "photo";
         renderPalettes();
-        gallery.scrollTop = 0;
         update();
       };
     }
@@ -184,12 +179,13 @@ export class CoverEditor {
       localOption ??= imageChoice.createEl("option", { value: "local" });
       localOption.setText(file.name);
       imageChoice.value = "local";
-      gallery.scrollTop = 0;
       update();
     };
   }
 
   get ready() { return !this.toggle.checked || !!this.blob; }
+  get enabled() { return this.toggle.checked; }
+  get previewURL() { return this.url; }
   get image() { return this.blob; }
 
   setLocked(locked: boolean) {
