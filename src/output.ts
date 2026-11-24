@@ -2,10 +2,15 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile, unlink, rmdir, rename } from "node:fs/promises";
 import { join } from "node:path";
 
-export async function writePages(parent: string, title: string, pages: Blob[]): Promise<string> {
+export function safeFileName(title: string) {
   let name = title.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/[. ]+$/g, "").trim() || "笔记";
   name = Array.from(name).slice(0, 60).join("");
   if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(name)) name = "_" + name;
+  return name;
+}
+
+export async function writePages(parent: string, title: string, pages: Blob[]): Promise<string> {
+  const name = safeFileName(title);
   let target: string;
   for (let n = 1; ; n++) {
     target = join(parent, n === 1 ? name : name + " (" + n + ")");
@@ -27,10 +32,10 @@ export async function writePages(parent: string, title: string, pages: Blob[]): 
   }
 }
 
-export async function saveDocument(path: string, document: Blob) {
+export async function saveFile(path: string, blob: Blob) {
   const temp = path + "." + randomUUID() + ".tmp";
   try {
-    await writeFile(temp, new Uint8Array(await document.arrayBuffer()), {flag: "wx"});
+    await writeFile(temp, new Uint8Array(await blob.arrayBuffer()), {flag: "wx"});
     await rename(temp, path);
   } finally { await unlink(temp).catch(() => {}); }
 }

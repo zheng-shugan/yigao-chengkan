@@ -47,6 +47,7 @@ const pageCSS = `
 *{box-sizing:border-box}
 body{margin:0}
 .page{display:flow-root;width:${pageWidth}px;height:${pageHeight}px;overflow-wrap:anywhere;line-break:strict}
+.page.pp-long-page{height:auto}
 .page>*{position:relative;margin:0}
 h1,h2,h3,h4,h5,h6{line-height:1.3;font-weight:700}
 h1{font-size:62px}h2{font-size:49px}h3{font-size:43px}h4{font-size:39px}h5{font-size:37px}h6{font-size:36px}
@@ -145,20 +146,25 @@ function split(block: HTMLElement, floor: number): HTMLElement | null {
   return tail;
 }
 
-export function paginate(doc: Document, blocks: HTMLElement[], id = defaultTemplate): HTMLElement[] {
-  if (!doc.head.querySelector("style[data-pp-layout]")) {
+function createPage(doc: Document, id: TemplateId, first: boolean) {
+  if (first && !doc.head.querySelector("style[data-pp-layout]")) {
     const style = doc.createElement("style");
     style.dataset.ppLayout = "";
     style.textContent = pageCSS;
     doc.head.append(style);
   }
+  const page = doc.createElement("article");
+  page.className = "page";
+  page.dataset.template = id;
+  if (first) page.dataset.first = "";
+  doc.body.append(page);
+  return page;
+}
+
+export function paginate(doc: Document, blocks: HTMLElement[], id = defaultTemplate): HTMLElement[] {
   const pages: HTMLElement[] = [];
   function nextPage() {
-    const page = doc.createElement("article");
-    page.className = "page";
-    page.dataset.template = id;
-    if (!pages.length) page.dataset.first = "";
-    doc.body.append(page);
+    const page = createPage(doc, id, !pages.length);
     pages.push(page);
     return page;
   }
@@ -243,21 +249,51 @@ export function paginate(doc: Document, blocks: HTMLElement[], id = defaultTempl
 
 export const exportScale = 2;
 
-export async function renderPNG(page: HTMLElement, css = pageCSS): Promise<Blob> {
+export async function renderLongPNG(doc: Document, blocks: HTMLElement[], id: TemplateId) {
+  const page = createPage(doc, id, true);
+  page.classList.add("pp-long-page");
+  try {
+    for (const block of blocks) page.append(block);
+    await doc.fonts.ready;
+    const height = Math.ceil(page.getBoundingClientRect().height);
+    const scale = Math.min(exportScale, 30_000 / height, Math.sqrt(48_000_000 / (pageWidth * height)));
+    if (scale < 1) throw new Error("文章太长，无法生成清晰的长图。请切回分页图片导出。");
+    const size = {
+      width: Math.floor(pageWidth * scale),
+      height: Math.floor(height * scale),
+    };
+    const blob = await renderPNG(page, pageCSS, height, size);
+    return { blob, ...size };
+  } finally {
+    page.remove();
+  }
+}
+
+export async function renderPNG(
+  page: HTMLElement,
+  css = pageCSS,
+  layoutHeight = pageHeight,
+  size = { width: pageWidth * exportScale, height: pageHeight * exportScale },
+): Promise<Blob> {
   const doc = page.ownerDocument;
   const wrap = doc.createElement("div");
   const style = doc.createElement("style");
   style.textContent = css;
   wrap.append(style, page.cloneNode(true));
   const xml = new XMLSerializer().serializeToString(wrap);
-  const width = pageWidth * exportScale;
-  const height = pageHeight * exportScale;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${pageWidth} ${pageHeight}"><foreignObject width="${pageWidth}" height="${pageHeight}">${xml}</foreignObject></svg>`;
+  const { width, height } = size;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${pageWidth} ${layoutHeight}" preserveAspectRatio="none"><foreignObject width="${pageWidth}" height="${layoutHeight}">${xml}</foreignObject></svg>`;
   const image = doc.createElement("img");
   image.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
   await image.decode();
   const canvas = doc.createElement("canvas");
   canvas.width = width; canvas.height = height;
-  canvas.getContext("2d")!.drawImage(image, 0, 0);
-  return new Promise((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("PNG 生成失败")), "image/png"));
+  try {
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("无法创建图片画布。");
+    context.drawImage(image, 0, 0);
+    return await new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("PNG 生成失败")), "image/png"));
+  } finally {
+    canvas.width = canvas.height = 0;
+  }
 }

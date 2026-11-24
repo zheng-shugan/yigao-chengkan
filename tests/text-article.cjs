@@ -67,7 +67,11 @@ async function main() {
         electron: {clipboard: {writeText: text => window.copied = text},
           remote: {getCurrentWindow() {}, dialog: {
             showOpenDialog: () => ({filePaths: [dir]}),
-            showSaveDialog: () => ({filePath: dir + "/article.docx"}),
+            showSaveDialog: (_window, options) => {
+              if (options.filters[0].extensions[0] !== "png") return {filePath: dir + "/article.docx"};
+              window.lastLongSave = options;
+              return window.cancelLongSave ? {canceled:true} : {filePath: dir + "/article-long.png"};
+            },
           }}},
         "node:path": {join: (...parts) => parts.join("/")},
         "node:crypto": {randomUUID: () => "test-temp"},
@@ -153,16 +157,32 @@ async function main() {
     assert.equal((await save()).match(/<w:drawing>/g).length,1);
     console.log("知乎 DOCX 用例通过：纯文字、单图、20 图、本地和网络图、重复引用、损坏和重试。");
     await verifyCovers(page, dir);
+    await verifyLongImage(page, dir);
   } finally { await browser.close(); await fs.rm(dir,{recursive:true,force:true}); }
 }
 
-async function verifyCovers(page, dir) {
-  const title = "Obsidian 笔记，怎么排成小红书图文？";
-  const open = async source => page.evaluate(s => {
+function openPicturePreview(page, source) {
+  return page.evaluate(s => {
     plugin.onunload();
     window.source = s;
     commands["export-note"].checkCallback(false);
   }, source);
+}
+
+async function previewBytes(image) {
+  return Buffer.from(await image.evaluate(async el => {
+    const blob = await (await fetch(el.src)).blob();
+    return new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(",")[1]);
+      reader.readAsDataURL(blob);
+    });
+  }), "base64");
+}
+
+async function verifyCovers(page, dir) {
+  const title = "Obsidian 笔记，怎么排成小红书图文？";
+  const open = source => openPicturePreview(page, source);
   await page.addStyleTag({path: "styles.css"});
   await open("# " + title + "\n\n## 准备工作\n\n![[一.png]]\n\n![蓝](https://example.org/blue.png)\n\n" + "校对正文分页。".repeat(240));
   const exportButton = page.getByRole("button", {name: "导出全部"});
@@ -176,14 +196,6 @@ async function verifyCovers(page, dir) {
   const localInput = page.locator('.pp-cover-images input[type="file"]');
   const ready = () => page.waitForFunction(() => document.querySelector(".pp-toolbar .mod-cta")?.disabled === false);
   const sources = () => body.evaluateAll(images => images.map(image => image.src));
-  const previewBytes = async image => Buffer.from(await image.evaluate(async el => {
-    const blob = await (await fetch(el.src)).blob();
-    return new Promise(resolve => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result.split(",")[1]);
-      reader.readAsDataURL(blob);
-    });
-  }), "base64");
   const exportPages = async () => {
     await exportButton.click();
     await page.getByRole("button", {name: "打开文件夹"}).waitFor();
@@ -375,6 +387,78 @@ async function verifyCovers(page, dir) {
   await exportPages();
   assert.deepEqual(await fs.readFile(path.join(dir, "验收样本 (3)", "001.png")), latest);
   console.log("封面用例通过：四个模板、配色、作者与字数、横竖图裁切、并发切换及导出顺序。");
+}
+
+async function verifyLongImage(page, dir) {
+  await openPicturePreview(page, "# 河岸散步路线与图文记录\n\n- 上游路线\n- 下游路线\n\n> 雨后的小路有积水。\n\n![[一.png]]\n\n"
+    + "沿河往返，记录每一段路的情况。".repeat(120) + "\n\n![蓝](https://example.org/blue.png)\n\n末尾图注");
+  const choose = name => page.getByRole("button", {name, exact:true}).click();
+  const longMode = page.getByRole("button", {name:"整篇长图", exact:true});
+  const pageMode = page.getByRole("button", {name:"分页图片", exact:true});
+  const warm = page.getByRole("button", {name:"暖纸便签"});
+  const coverToggle = page.getByRole("checkbox", {name:"添加封面"});
+  const cover = page.locator(".pp-cover-preview img[src]");
+  const coverTitle = page.getByRole("textbox", {name:"封面标题"});
+  const longPreview = page.getByRole("img", {name:"文章长图"});
+  const ready = () => page.waitForFunction(() => document.querySelector(".pp-toolbar .mod-cta")?.disabled === false);
+  await ready();
+  assert.equal(await pageMode.getAttribute("aria-pressed"), "true");
+  await warm.click();
+  await ready();
+  await coverToggle.check();
+  await coverTitle.fill("独立封面");
+  await ready();
+  const coverSrc = await cover.getAttribute("src");
+
+  await longMode.click();
+  await ready();
+  assert.equal(await warm.getAttribute("aria-pressed"), "true");
+  assert.equal(await longMode.getAttribute("aria-pressed"), "true");
+  assert.equal(await cover.isVisible(), false);
+  assert.equal(await coverToggle.isVisible(), false);
+  assert.equal(await page.locator(".pp-pages figure:visible").count(), 1);
+  const png = await previewBytes(longPreview);
+  assert.equal(png.readUInt32BE(16), 2160);
+  assert.ok(png.readUInt32BE(20) > 2880);
+  assert.equal(await page.locator(".pp-status").innerText(), "2160 × " + png.readUInt32BE(20) + " px");
+
+  await choose("经典白底");
+  await ready();
+  assert.notDeepEqual(await previewBytes(longPreview), png);
+  await warm.click();
+  await ready();
+  assert.deepEqual(await previewBytes(longPreview), png);
+  const target = path.join(dir, "article-long.png");
+  await page.evaluate(() => { window.cancelLongSave = true; });
+  await choose("导出长图");
+  await ready();
+  assert.equal(await page.evaluate(() => lastLongSave.defaultPath), "验收样本-长图.png");
+  await assert.rejects(fs.access(target), {code:"ENOENT"});
+  await page.evaluate(() => { window.cancelLongSave = false; });
+  await choose("导出长图");
+  await page.getByText(/已导出长图/).waitFor();
+  assert.deepEqual(await fs.readFile(target), png);
+  await pageMode.click();
+  await ready();
+  assert.equal(await coverToggle.isChecked(), true);
+  assert.equal(await coverTitle.inputValue(), "独立封面");
+  assert.equal(await cover.getAttribute("src"), coverSrc);
+
+  // Trigger the height guard without first rendering dozens of ordinary pages.
+  await page.evaluate(() => {
+    const doc = document.querySelector(".pp-modal > div > iframe.pp-measure").contentDocument;
+    const style = doc.createElement("style");
+    style.textContent = ".pp-long-page { min-height: 30001px; }";
+    doc.head.append(style);
+  });
+  await longMode.click();
+  await page.getByText(/文章太长，无法生成清晰的长图/).waitFor();
+  assert.equal(await page.getByRole("button", {name:"导出长图"}).isDisabled(), true);
+  assert.equal(await longPreview.count(), 0);
+  await pageMode.click();
+  await ready();
+  assert.equal(await cover.isVisible(), true);
+  console.log("长图用例通过：模板切换、保存与取消、封面恢复、超限回退。");
 }
 
 main().catch(e => {console.error(e); process.exitCode = 1;});

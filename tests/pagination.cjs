@@ -200,6 +200,52 @@ async function main() {
           expect(getComputedStyle(section.nextElementSibling).fontSize === "39px", "Outline H3 sizing missing");
         }
       }
+
+      document.body.replaceChildren();
+      const { blocks: continuous } = plugin.article(document, story + "\n\n末尾内容。", "样本");
+      const longFigure = continuous.find(block => block.tagName === "FIGURE");
+      const longPicture = (await picture(800, 630, "训练路线")).firstElementChild;
+      longFigure.replaceChildren(longPicture);
+      plugin.sizePicture(longPicture, "warm");
+      const marker = filler(24);
+      marker.style.background = "#d84c2b";
+      continuous.push(marker);
+      const expected = continuous.map(block => block.textContent).join("");
+      const pending = plugin.renderLongPNG(document, continuous, "warm");
+      const longPage = document.querySelector(".pp-long-page");
+      const markerY = marker.getBoundingClientRect().top - longPage.getBoundingClientRect().top;
+      expect(longPage.textContent === expected, "Long image changed article text");
+      expect(Array.from(longPage.children).every((el, i) => el === continuous[i]), "Long image reordered blocks");
+      const imageBounds = longPicture.getBoundingClientRect();
+      expect(Math.abs(imageBounds.height - imageBounds.width * 630 / 800) < .1, "Long image distorted its picture");
+      const single = await pending;
+      const pixel = document.createElement("canvas");
+      pixel.width = pixel.height = 1;
+      const ctx = pixel.getContext("2d");
+      const samplePixel = (bitmap, x, y) => {
+        ctx.drawImage(bitmap, x, y, 1, 1, 0, 0, 1, 1);
+        return [...ctx.getImageData(0, 0, 1, 1).data].join();
+      };
+      const bitmap = await createImageBitmap(single.blob);
+      expect(bitmap.width === 2160 && bitmap.height === single.height && bitmap.height > 5760, "Wrong long PNG dimensions");
+      expect(samplePixel(bitmap, 500, markerY * 2 + 8) === "216,76,43,255", "Long PNG lost its final block");
+      expect(samplePixel(bitmap, 68, Math.floor(bitmap.height / 2)) === "232,228,219,255", "Warm frame interrupted in long PNG");
+      expect(samplePixel(bitmap, 200, bitmap.height - 97) === "232,228,219,255", "Warm frame missing at the bottom of long PNG");
+      bitmap.close();
+      expect(!document.querySelector(".pp-long-page"), "Long measurement page was not removed");
+
+      for (const height of [14000, 27000]) {
+        const last = filler(24);
+        last.style.background = "#d84c2b";
+        const scaled = await plugin.renderLongPNG(document, [filler(height), last], "classic");
+        expect(scaled.width >= 1080 && scaled.width < 2160, "Long PNG should scale down proportionally");
+        expect(scaled.height <= 30000 && scaled.width * scaled.height <= 48_000_000, "Long PNG exceeded its size budget");
+        const bitmap = await createImageBitmap(scaled.blob);
+        expect(bitmap.height === scaled.height && bitmap.width === scaled.width, "Scaled PNG dimensions differ from preview");
+        const y = Math.floor((height + 78 + 25 + 10) * scaled.height / (height + 78 + 25 + 24 + 78));
+        expect(samplePixel(bitmap, 500, y) === "216,76,43,255", "Scaled PNG clipped its final block");
+        bitmap.close();
+      }
       return shots.map(buffer=>Array.from(new Uint8Array(buffer)));
     });
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yigao-chengkan-layout-"));

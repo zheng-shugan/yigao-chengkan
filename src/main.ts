@@ -1,9 +1,9 @@
 import { App, MarkdownView, Modal, Notice, Plugin, requestUrl, TFile, getFrontMatterInfo } from "obsidian";
 import { article, textArticle } from "./article";
-import { defaultTemplate, exportScale, pageHeight, pageTemplates, pageWidth, paginate, pictureBounds, renderPNG, sizePicture, TemplateId } from "./layout";
+import { defaultTemplate, exportScale, pageHeight, pageTemplates, pageWidth, paginate, pictureBounds, renderLongPNG, renderPNG, sizePicture, TemplateId } from "./layout";
 import { CoverEditor } from "./cover-editor";
 import { preparePicture, wordArticle, Picture } from "./word";
-import { writePages, saveDocument } from "./output";
+import { safeFileName, saveFile, writePages } from "./output";
 
 const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -48,6 +48,18 @@ async function chooseFolder() {
   });
 }
 
+async function chooseLongImage(basename: string) {
+  const electron = require("electron");
+  const remote = electron.remote ?? require("@electron/remote");
+  return remote.dialog.showSaveDialog(remote.getCurrentWindow(), {
+    title: "保存整篇长图", defaultPath: safeFileName(basename) + "-长图.png",
+    filters: [{ name: "PNG 图片", extensions: ["png"] }],
+  });
+}
+
+const exportModes = { pages: "分页图片", long: "整篇长图" };
+type ExportMode = keyof typeof exportModes;
+
 class Preview extends Modal {
   private closed = false;
   private urls: string[] = [];
@@ -57,8 +69,16 @@ class Preview extends Modal {
 
   async onOpen() {
     this.modalEl.addClass("pp-modal");
-    this.titleEl.setText("导出分页图片");
+    this.titleEl.setText("导出文章图片");
     const bar = this.contentEl.createDiv({ cls: "pp-toolbar" });
+    const modePicker = bar.createDiv({ cls: "pp-export-modes", attr: { role: "group", "aria-label": "导出模式" } });
+    const modeButtons = new Map<ExportMode, HTMLButtonElement>();
+    for (const mode of Object.keys(exportModes) as ExportMode[]) {
+      const control = modePicker.createEl("button", {
+        text: exportModes[mode], attr: { type: "button", "aria-pressed": String(mode === "pages") },
+      });
+      modeButtons.set(mode, control);
+    }
     const status = bar.createDiv({ cls: "pp-status", text: "正在排版…" });
     status.setAttribute("role", "status");
     const button = bar.createEl("button", { cls: "mod-cta", text: "导出全部" });
@@ -87,13 +107,16 @@ class Preview extends Modal {
     frame.tabIndex = -1;
     frame.setAttribute("aria-hidden", "true");
     let busy = false;
-    let activeTemplate: TemplateId | undefined;
+    let template = defaultTemplate;
+    let mode: ExportMode = "pages";
+    let longSize = "";
     const refreshExport = () => {
-      button.disabled = busy || !this.blobs.length || this.cover?.ready === false;
+      button.disabled = busy || !this.blobs.length || (mode === "pages" && this.cover?.ready === false);
     };
     const setBusy = (value: boolean) => {
       busy = value;
       refreshExport();
+      for (const control of modeButtons.values()) control.disabled = value;
       for (const card of cards.values()) card.setAttribute("aria-disabled", String(busy));
     };
     const doc = frame.contentDocument!;
@@ -120,6 +143,7 @@ class Preview extends Modal {
       }
       const cover = this.cover = new CoverEditor(
         coverHost, gallery, { title, wordCount }, cache, file => pictureDataURL(file, pageWidth, pageHeight), () => {
+          if (mode === "long") return;
           const open = bar.querySelector(".pp-open");
           if (open) {
             open.remove();
@@ -128,45 +152,49 @@ class Preview extends Modal {
           refreshExport();
         },
       );
-      const render = async (id: TemplateId) => {
+      const render = async () => {
         setBusy(true);
+        bodyGallery.replaceChildren();
+        this.clearPages();
+        bar.querySelector(".pp-open")?.remove();
         status.setText("正在排版…");
-        const nextUrls: string[] = [];
         try {
           const copies = blocks.map(block => doc.importNode(block, true));
           await Promise.all(copies.flatMap(block => Array.from(block.querySelectorAll("img"), async img => {
             img.src = cache.get(img.dataset.source!)!;
             await img.decode();
-            sizePicture(img, id);
+            sizePicture(img, template);
           })));
           await doc.fonts.ready;
           if (this.closed) return;
-          const pages = paginate(doc, copies, id);
           const blobs: Blob[] = [];
-          for (const page of pages) {
-            const blob = await renderPNG(page);
+          if (mode === "long") {
+            const { blob, width, height } = await renderLongPNG(doc, copies, template);
             if (this.closed) return;
             blobs.push(blob);
+            longSize = width + " × " + height + " px";
+          } else {
+            for (const page of paginate(doc, copies, template)) {
+              const blob = await renderPNG(page);
+              if (this.closed) return;
+              blobs.push(blob);
+            }
           }
           const figures = blobs.map((blob, i) => {
             const url = URL.createObjectURL(blob);
-            nextUrls.push(url);
+            this.urls.push(url);
             const figure = gallery.ownerDocument.createElement("figure");
-            figure.createEl("img", { attr: { src: url, alt: "第 " + (i + 1) + " 页" } });
-            figure.createEl("figcaption", { text: (i + 1) + " / " + blobs.length });
+            const alt = mode === "long" ? "文章长图" : "第 " + (i + 1) + " 页";
+            figure.createEl("img", { attr: { src: url, alt } });
+            if (mode === "pages") figure.createEl("figcaption", { text: (i + 1) + " / " + blobs.length });
             return figure;
           });
           bodyGallery.replaceChildren(...figures);
           gallery.scrollTop = 0;
-          this.urls.forEach(url => URL.revokeObjectURL(url));
-          this.urls = nextUrls;
           this.blobs = blobs;
-          activeTemplate = id;
-          for (const [key, card] of cards) card.setAttribute("aria-pressed", String(key === id));
-          bar.querySelector(".pp-open")?.remove();
-          status.setText("共 " + blobs.length + " 页正文");
+          status.setText(mode === "long" ? longSize : "共 " + blobs.length + " 页正文");
         } catch (e) {
-          nextUrls.forEach(url => URL.revokeObjectURL(url));
+          this.clearPages();
           if (!this.closed) status.setText("排版失败：" + message(e));
         } finally {
           doc.body.replaceChildren();
@@ -174,24 +202,55 @@ class Preview extends Modal {
         }
       };
       for (const [id, card] of cards) {
-        card.onclick = () => { if (!busy && id !== activeTemplate) void render(id); };
+        card.onclick = () => {
+          if (busy || (id === template && this.blobs.length)) return;
+          template = id;
+          for (const [key, option] of cards) option.setAttribute("aria-pressed", String(key === id));
+          void render();
+        };
+      }
+      for (const [id, control] of modeButtons) {
+        control.onclick = () => {
+          if (busy || id === mode) return;
+          mode = id;
+          this.modalEl.classList.toggle("pp-long-mode", id === "long");
+          button.setText(id === "long" ? "导出长图" : "导出全部");
+          for (const [key, option] of modeButtons) option.setAttribute("aria-pressed", String(key === id));
+          void render();
+        };
       }
       button.onclick = async () => {
         if (button.disabled) return;
-        const pages = cover.image ? [cover.image, ...this.blobs] : this.blobs;
         setBusy(true);
         cover.setLocked(true);
         try {
-          const result = await chooseFolder();
-          if (result.canceled || !result.filePaths.length || this.closed) return;
-          status.setText("正在导出…");
-          const target = await writePages(result.filePaths[0], this.file.basename, pages);
-          if (this.closed) return;
-          status.setText("已导出 " + pages.length + " 张图片");
+          let target: string;
+          if (mode === "long") {
+            const result = await chooseLongImage(this.file.basename);
+            if (result.canceled || !result.filePath || this.closed) return;
+            target = result.filePath;
+            status.setText("正在导出…");
+            await saveFile(target, this.blobs[0]);
+            if (this.closed) return;
+            status.setText("已导出长图 · " + longSize);
+          } else {
+            const pages = cover.image ? [cover.image, ...this.blobs] : this.blobs;
+            const result = await chooseFolder();
+            if (result.canceled || !result.filePaths.length || this.closed) return;
+            status.setText("正在导出…");
+            target = await writePages(result.filePaths[0], this.file.basename, pages);
+            if (this.closed) return;
+            status.setText("已导出 " + pages.length + " 张图片");
+          }
           bar.querySelector(".pp-open")?.remove();
           const open = bar.createEl("button", { cls: "pp-open", text: "打开文件夹" });
           open.onclick = async () => {
-            const reason = await require("electron").shell.openPath(target);
+            const shell = require("electron").shell;
+            if (mode === "long") {
+              shell.showItemInFolder(target);
+              return;
+            }
+            const reason = await shell.openPath(target);
             if (reason) new Notice(reason);
           };
         } catch (e) {
@@ -203,7 +262,7 @@ class Preview extends Modal {
           }
         }
       };
-      await render(defaultTemplate);
+      await render();
     } catch (e) {
       if (!this.closed) status.setText("排版失败：" + message(e));
     }
@@ -212,11 +271,15 @@ class Preview extends Modal {
   onClose() {
     this.closed = true;
     this.cover?.dispose();
+    this.clearPages();
+    this.contentEl.empty();
+    this.dispose();
+  }
+
+  private clearPages() {
     this.urls.forEach(url => URL.revokeObjectURL(url));
     this.urls = [];
     this.blobs = [];
-    this.contentEl.empty();
-    this.dispose();
   }
 }
 
@@ -281,7 +344,7 @@ class TextPreview extends Modal {
             filters: [{ name: "Word 文档", extensions: ["docx"] }]
           });
           if (this.closed || result.canceled || !result.filePath) return;
-          await saveDocument(result.filePath, doc);
+          await saveFile(result.filePath, doc);
           status.setText("已保存 " + result.filePath + "。在知乎空白文章中选择「导入 → 导入文档」。");
         } catch (e) { status.setText("生成失败：" + message(e)); }
         finally { button.disabled = false; }
