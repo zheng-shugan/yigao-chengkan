@@ -1,4 +1,4 @@
-import { coverTemplates, CoverTemplateId, defaultCoverTemplate, renderCover } from "./cover";
+import { coverAuthorLimit, CoverContent, CoverCrop, CoverPaletteIndex, coverTemplates, CoverTemplateId, defaultCoverTemplate, renderCover } from "./cover";
 
 export class CoverEditor {
   private revision = 0;
@@ -10,7 +10,7 @@ export class CoverEditor {
   private readonly toggle: HTMLInputElement;
 
   constructor(
-    host: HTMLElement, gallery: HTMLElement, initialTitle: string, pictures: ReadonlyMap<string, string>,
+    host: HTMLElement, gallery: HTMLElement, article: { title: string; wordCount: number }, pictures: ReadonlyMap<string, string>,
     prepareLocalPicture: (file: File) => Promise<string>, changed: () => void,
   ) {
     const view = host.ownerDocument.defaultView!;
@@ -34,9 +34,16 @@ export class CoverEditor {
     const fields = controls.createDiv({ cls: "pp-cover-fields" });
     const titleLabel = fields.createEl("label", { text: "封面标题" });
     const title = titleLabel.createEl("textarea", { attr: { rows: "2" } });
-    title.value = initialTitle;
+    title.value = article.title;
     const subtitleLabel = fields.createEl("label", { text: "副标题（可选）" });
     const subtitle = subtitleLabel.createEl("textarea", { attr: { rows: "2" } });
+    const authorLabel = fields.createEl("label", { text: "作者（可选）" });
+    const author = authorLabel.createEl("input", { type: "text", attr: { placeholder: `最多 ${coverAuthorLimit} 个字符` } });
+    const readingLabel = fields.createEl("label", { cls: "pp-cover-reading" });
+    const reading = readingLabel.createEl("input", { type: "checkbox" });
+    readingLabel.createSpan({ text: "显示字数与预计阅读时间" });
+    const palettePicker = controls.createDiv({ cls: "pp-cover-palettes", attr: { role: "group", "aria-label": "封面配色" } });
+    const selectedPalettes = new Map<CoverTemplateId, CoverPaletteIndex>();
     const imageControls = controls.createDiv({ cls: "pp-cover-images" });
     imageControls.hidden = true;
     const imageLabel = imageControls.createEl("label", { text: "封面配图" });
@@ -49,6 +56,17 @@ export class CoverEditor {
     imageChoice.value = sources.length ? "0" : "";
     const local = imageControls.createEl("input", { type: "file", attr: { accept: "image/*", hidden: "" } });
     const browse = imageControls.createEl("button", { text: "选择本地图片…", attr: { type: "button" } });
+    const cropControls = controls.createDiv({ cls: "pp-cover-crop", attr: { role: "group", "aria-label": "裁切位置" } });
+    cropControls.hidden = true;
+    const cropSelect = (label: string, options: [string, string][]) => {
+      const field = cropControls.createEl("label", { text: label });
+      const select = field.createEl("select", { cls: "dropdown" });
+      for (const [value, text] of options) select.createEl("option", { value, text });
+      select.value = "center";
+      return select;
+    };
+    const horizontal = cropSelect("水平裁切", [["left", "靠左"], ["center", "居中"], ["right", "靠右"]]);
+    const vertical = cropSelect("垂直裁切", [["top", "靠上"], ["center", "居中"], ["bottom", "靠下"]]);
     const status = controls.createDiv({ cls: "pp-cover-status", attr: { role: "status" } });
     const frame = fieldset.createEl("iframe", { cls: "pp-measure", attr: { "aria-hidden": "true", tabindex: "-1" } });
 
@@ -77,9 +95,16 @@ export class CoverEditor {
       const hasImage = coverTemplates[template].image;
       const selection = imageChoice.value;
       const file = selection === "local" ? localFile : undefined;
-      const content = {
+      const content: CoverContent = {
         template, title: title.value, subtitle: subtitle.value,
         image: hasImage && selection && !file ? pictures.get(sources[Number(selection)]) : undefined,
+        author: author.value,
+        wordCount: reading.checked ? article.wordCount : undefined,
+        palette: selectedPalettes.get(template),
+        crop: template === "photo" ? {
+          horizontal: horizontal.value as CoverCrop["horizontal"],
+          vertical: vertical.value as CoverCrop["vertical"],
+        } : undefined,
       };
       status.setText("正在生成封面…");
       this.timer = view.setTimeout(async () => {
@@ -107,6 +132,29 @@ export class CoverEditor {
       }, 120);
     };
 
+    const renderPalettes = () => {
+      palettePicker.replaceChildren();
+      palettePicker.createSpan({ text: "配色" });
+      const selected = selectedPalettes.get(this.template) ?? 0;
+      for (const index of [0, 1, 2] as const) {
+        const { label, paper, accent } = coverTemplates[this.template].palettes[index];
+        const swatch = palettePicker.createEl("button", {
+          cls: "pp-cover-palette", attr: { type: "button", "aria-pressed": String(index === selected) },
+        });
+        const dot = swatch.createSpan({ attr: { "aria-hidden": "true" } });
+        dot.style.background = `linear-gradient(135deg,${paper} 50%,${accent} 50%)`;
+        swatch.createSpan({ text: label });
+        swatch.onclick = () => {
+          if (swatch.getAttribute("aria-pressed") === "true") return;
+          selectedPalettes.set(this.template, index);
+          palettePicker.querySelector('[aria-pressed="true"]')?.setAttribute("aria-pressed", "false");
+          swatch.setAttribute("aria-pressed", "true");
+          update();
+        };
+      }
+    };
+    renderPalettes();
+
     enabled.onchange = () => {
       controls.hidden = !enabled.checked;
       if (enabled.checked) gallery.scrollTop = 0;
@@ -118,11 +166,14 @@ export class CoverEditor {
         this.template = id;
         for (const [key, option] of cards) option.setAttribute("aria-pressed", String(key === id));
         imageControls.hidden = !coverTemplates[id].image;
+        cropControls.hidden = id !== "photo";
+        renderPalettes();
         gallery.scrollTop = 0;
         update();
       };
     }
-    title.oninput = subtitle.oninput = imageChoice.onchange = update;
+    title.oninput = subtitle.oninput = author.oninput = reading.onchange = imageChoice.onchange = update;
+    horizontal.onchange = vertical.onchange = update;
     browse.onclick = () => local.click();
     local.onchange = () => {
       const file = local.files?.[0];

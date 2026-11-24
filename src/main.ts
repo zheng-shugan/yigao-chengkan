@@ -73,10 +73,13 @@ class Preview extends Modal {
         cls: "pp-template",
         attr: { type: "button", "aria-pressed": String(id === defaultTemplate) },
       });
-      const sample = card.createSpan({ cls: "pp-template-sample", attr: { "aria-hidden": "true", "data-template": id } });
-      sample.style.setProperty("--pp-paper", template.paper);
-      sample.style.setProperty("--pp-ink", template.ink);
-      sample.style.setProperty("--pp-accent", template.accent);
+      const samples = card.createSpan({ cls: "pp-template-samples", attr: { "aria-hidden": "true" } });
+      samples.style.setProperty("--pp-paper", template.paper);
+      samples.style.setProperty("--pp-ink", template.ink);
+      samples.style.setProperty("--pp-accent", template.accent);
+      for (const page of ["first", "next"]) {
+        samples.createSpan({ cls: "pp-template-sample", attr: { "data-template": id, "data-page": page } });
+      }
       card.createSpan({ text: template.label });
       cards.set(id, card);
     }
@@ -97,7 +100,7 @@ class Preview extends Modal {
     const cache = new Map<string, string>();
     setBusy(true);
     try {
-      const { title, blocks } = article(doc, this.source, this.file.basename);
+      const { title, blocks, wordCount } = article(doc, this.source, this.file.basename);
       const sources = new Set(blocks.flatMap(block => Array.from(block.querySelectorAll("img"), img => img.dataset.source!)));
       const failures = new Map<string, string>();
       const { width, height } = pictureBounds(defaultTemplate);
@@ -116,7 +119,7 @@ class Preview extends Modal {
         return;
       }
       const cover = this.cover = new CoverEditor(
-        coverHost, gallery, title, cache, file => pictureDataURL(file, pageWidth, pageHeight), () => {
+        coverHost, gallery, { title, wordCount }, cache, file => pictureDataURL(file, pageWidth, pageHeight), () => {
           const open = bar.querySelector(".pp-open");
           if (open) {
             open.remove();

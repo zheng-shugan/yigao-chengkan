@@ -143,6 +143,33 @@ async function main() {
       shots.push(await warmBlob.arrayBuffer());
       const [classic] = await verify([para("切回经典白底")]);
       expect(getComputedStyle(classic).backgroundColor === "rgb(255, 255, 255)", "Warm styling carried over to classic");
+      const story = "# 海边训练日记\n\n## 配速与补给\n\n### 第一圈\n\n- 慢跑热身\n- 沿海往返\n\n> 海风影响配速。\n\n"
+        + "第一圈按计划控制强度，记录配速和主观感受。".repeat(45)
+        + "\n\n## 路线与照片\n\n![[海边.png]]\n\n图一：折返点。\n\n"
+        + "第二圈的路线和第一圈一致。".repeat(30);
+      for (const id of Object.keys(plugin.pageTemplates)) {
+        const { blocks: storyBlocks } = plugin.article(document, story, "样本");
+        const figure = storyBlocks.find(block => block.tagName === "FIGURE");
+        const firstPicture = (await picture(800, 630, "训练路线")).firstElementChild;
+        firstPicture.dataset.source = "海边.png";
+        figure.replaceChildren(firstPicture);
+        plugin.sizePicture(firstPicture, id);
+        const output = await verify(storyBlocks, id);
+        expect(output.length > 1, id + " did not produce a continuation page");
+        expect(output.slice(1).every(p => !p.hasAttribute("data-first")), id + " repeated the first-page treatment");
+        const title = output[0].querySelector("[data-article-title]");
+        const section = output[0].querySelector("h2");
+        if (id === "column") {
+          expect(getComputedStyle(title).backgroundColor === "rgb(41, 36, 81)", "Column title panel missing");
+          expect(getComputedStyle(section).borderBottomWidth === "2px", "Column section rule missing");
+        } else if (id === "grid") {
+          expect(getComputedStyle(output[1]).backgroundImage !== "none", "Grid missing from continuation");
+          expect(getComputedStyle(section).backgroundColor === "rgb(224, 233, 212)", "Grid heading highlight missing");
+        } else if (id === "outline") {
+          expect(getComputedStyle(section).borderLeftWidth === "7px", "Outline section marker missing");
+          expect(getComputedStyle(section.nextElementSibling).fontSize === "39px", "Outline H3 sizing missing");
+        }
+      }
       return shots.map(buffer=>Array.from(new Uint8Array(buffer)));
     });
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yigao-chengkan-layout-"));

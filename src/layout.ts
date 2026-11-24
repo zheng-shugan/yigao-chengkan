@@ -10,6 +10,18 @@ export const pageTemplates = {
     label: "暖纸便签", paper: "#fbf2e2", ink: "#372d27", accent: "#9a4c3c",
     top: 114, bottom: 92, side: 96, fontSize: 36, lineHeight: 1.72, gap: 28,
   },
+  column: {
+    label: "色块专栏", paper: "#f5f5fa", ink: "#272740", accent: "#292451",
+    top: 82, bottom: 82, side: 80, fontSize: 37, lineHeight: 1.58, gap: 29,
+  },
+  grid: {
+    label: "方格手记", paper: "#faf6e9", ink: "#272e25", accent: "#28523e",
+    top: 91, bottom: 90, side: 88, fontSize: 36, lineHeight: 1.68, gap: 26,
+  },
+  outline: {
+    label: "章节提纲", paper: "#f4f8fb", ink: "#263849", accent: "#2c617f",
+    top: 82, bottom: 82, side: 84, fontSize: 35, lineHeight: 1.52, gap: 22,
+  },
 };
 export type TemplateId = keyof typeof pageTemplates;
 export const defaultTemplate: TemplateId = "classic";
@@ -53,6 +65,21 @@ ${templateCSS}
 .page[data-template="warm"] pre,.page[data-template="warm"] code{background:#f1e4d0}
 .page[data-template="warm"] hr{background:#d8c3aa}
 .page[data-template="warm"] td,.page[data-template="warm"] th{border-color:#cdb69d}
+.page[data-template="column"][data-first]>[data-article-title]{
+  background:#292451;color:#faf8ff;padding:72px 52px;font-size:78px;line-height:1.16;text-wrap:balance}
+.page[data-template="column"]>h2{color:#292451;border-bottom:2px solid #c1bdd4;padding-bottom:12px}
+.page[data-template="column"]>h3{color:#454070}
+.page[data-template="grid"]{
+  background-image:linear-gradient(#bdad882b 1px,transparent 1px),linear-gradient(90deg,#bdad882b 1px,transparent 1px);
+  background-size:38px 38px;background-position:center top}
+.page[data-template="grid"]>h1{color:#234634;font-family:"Songti SC","Noto Serif CJK SC",SimSun,serif}
+.page[data-template="grid"]>h2{color:#234634;background:#e0e9d4;padding:9px 17px}
+.page[data-template="grid"]>h3{color:#28523e}
+.page[data-template="outline"]>h1{color:#294c64;font-size:66px}
+.page[data-template="outline"]>h2{border-left:7px solid #2c617f;padding-left:18px;color:#234c67}
+.page[data-template="outline"]>h3{font-size:39px;color:#385e77}
+.page[data-template="outline"] .quoted{background:#e7f0f6;color:#36536a}
+.page[data-template="outline"] [data-marker]::before{color:#2c617f;font-weight:650}
 `;
 
 export function sizePicture(img: HTMLImageElement, id: TemplateId) {
@@ -127,6 +154,7 @@ export function paginate(doc: Document, blocks: HTMLElement[], id = defaultTempl
     const page = doc.createElement("article");
     page.className = "page";
     page.dataset.template = id;
+    if (!pages.length) page.dataset.first = "";
     doc.body.append(page);
     pages.push(page);
     return page;

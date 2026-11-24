@@ -47,8 +47,12 @@ function renderArticle(doc: Document, markdown: string, title: string, publicTex
 
 export function article(doc: Document, markdown: string, fallback: string) {
   const root = renderArticle(doc, markdown, fallback);
-  const title = root.firstElementChild?.textContent?.trim() || fallback;
+  const articleHeading = root.firstElementChild;
+  const title = articleHeading?.textContent?.trim() || fallback;
+  const bodyText = Array.from(root.children).slice(1).map(child => child.textContent).join("");
+  const wordCount = bodyText.match(/[\p{L}\p{N}]/gu)?.length ?? 0;
   const blocks: HTMLElement[] = [];
+  let markedTitle = false;
   function visit(el: Element, depth: number, quoted: boolean) {
     if (el.matches("ul,ol")) {
       let number = Number(el.getAttribute("start") || 1);
@@ -84,7 +88,13 @@ export function article(doc: Document, markdown: string, fallback: string) {
     const emitText = () => {
       const block = el.cloneNode(false) as HTMLElement;
       block.append(range.cloneContents());
-      if (block.textContent?.trim() || block.querySelector("br") || el.tagName === "HR") emit(block);
+      if (block.textContent?.trim() || block.querySelector("br") || el.tagName === "HR") {
+        if (el === articleHeading && !markedTitle) {
+          block.dataset.articleTitle = "";
+          markedTitle = true;
+        }
+        emit(block);
+      }
     };
     for (const img of el.querySelectorAll("img")) {
       range.setEndBefore(img);
@@ -98,7 +108,7 @@ export function article(doc: Document, markdown: string, fallback: string) {
     emitText();
   }
   for (const child of root.children) visit(child, 0, false);
-  return { title, blocks };
+  return { title, blocks, wordCount };
 }
 
 export function textArticle(doc: Document, markdown: string, fallback: string) {
